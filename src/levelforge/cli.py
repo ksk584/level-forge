@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="Watch the trained DQN agent replay a level (PyQt5)")
     w.add_argument("--level", required=True)
     w.add_argument("--checkpoint", required=True, help="path to a checkpoint .pt written by evolve/train-baseline")
-    w.add_argument("--delay", type=int, default=200, help="milliseconds between agent moves")
+    w.add_argument("--delay", type=int, default=350, help="milliseconds between agent moves (30-5000); +/- keys adjust live")
     w.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("summarise", help="Summarise a metrics.jsonl file")

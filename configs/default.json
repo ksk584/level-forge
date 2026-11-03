@@ -1,0 +1,19 @@
+{
+  "size": 10,
+  "n_boxes": 3,
+  "wall_frac": 0.12,
+  "heavy_prob": 0.25,
+  "fragile_prob": 0.2,
+  "population_size": 24,
+  "generations": 10,
+  "elite_k": 2,
+  "eval_trials": 2,
+  "topk_retrain": 5,
+  "pretrain_episodes": 300,
+  "retrain_episodes": 120,
+  "pool_size": 40,
+  "max_steps": 300,
+  "max_nodes": 30000,
+  "heldout_size": 20,
+  "seed": 42
+}

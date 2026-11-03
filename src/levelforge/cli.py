@@ -72,9 +72,14 @@ def cmd_render(args):
 
 
 def cmd_watch(args):
-    from .qt_viewer import run_agent
     level = Level.load_json(args.level)
-    run_agent(level, args.checkpoint, delay_ms=args.delay)
+    if args.text:
+        from .replay import run_text
+        run_text(level, args.checkpoint, delay_ms=args.delay, max_steps=args.max_steps,
+                 explore=args.explore, seed=args.seed)
+        return
+    from .qt_viewer import run_agent
+    run_agent(level, args.checkpoint, delay_ms=args.delay, explore=args.explore, seed=args.seed)
 
 
 def cmd_play(args):
@@ -166,6 +171,10 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--level", required=True)
     w.add_argument("--checkpoint", required=True, help="path to a checkpoint .pt written by evolve/train-baseline")
     w.add_argument("--delay", type=int, default=350, help="milliseconds between agent moves (30-5000); +/- keys adjust live")
+    w.add_argument("--text", action="store_true", help="headless mode: print board frames to the terminal instead of opening a window")
+    w.add_argument("--max-steps", type=int, default=500, help="step cap for --text mode")
+    w.add_argument("--explore", type=float, default=0.0, help="exploration epsilon for replay (0 = pure greedy). Try 0.2-0.3 to see the agent move when undertrained")
+    w.add_argument("--seed", type=int, default=0, help="RNG seed for --explore sampling")
     w.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("summarise", help="Summarise a metrics.jsonl file")

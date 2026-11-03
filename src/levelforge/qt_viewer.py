@@ -13,10 +13,19 @@ Watch the trained agent replay a level:
 from __future__ import annotations
 
 import sys
+import traceback
 
 from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_NORMAL, Level
 
 CELL = 34
+
+
+def _install_excepthook():
+    """Print (not swallow) uncaught UI-thread errors so the failure is visible."""
+    def hook(exctype, value, tb):
+        print("[levelforge] uncaught error in the viewer:", file=sys.stderr)
+        traceback.print_exception(exctype, value, tb)
+    sys.excepthook = hook
 
 
 def _make_board_cls(QtCore, QtGui, QtWidgets, level):
@@ -101,6 +110,7 @@ def run(level: Level):
         print("PyQt5 is not installed; use `python -m levelforge render --level ... --out level.png` instead.")
         raise SystemExit(2) from e
 
+    _install_excepthook()
     app = QtWidgets.QApplication(sys.argv)
     Board = _make_board_cls(QtCore, QtGui, QtWidgets, level)
     board = Board()
@@ -108,7 +118,7 @@ def run(level: Level):
     sys.exit(app.exec_())
 
 
-def run_agent(level: Level, checkpoint: str, delay_ms: int = 350):
+def run_agent(level: Level, checkpoint: str, delay_ms: int = 350, explore: float = 0.0, seed: int = 0):
     try:
         from PyQt5 import QtCore, QtGui, QtWidgets
     except ImportError as e:  # pragma: no cover
@@ -122,7 +132,11 @@ def run_agent(level: Level, checkpoint: str, delay_ms: int = 350):
     except Exception as e:
         print(f"[levelforge] could not load checkpoint: {checkpoint}\n           {e}")
         raise SystemExit(2) from e
+    agent.epsilon = max(0.0, min(1.0, explore))
+    import random
+    random.seed(seed)
 
+    _install_excepthook()
     app = QtWidgets.QApplication(sys.argv)
     Board = _make_board_cls(QtCore, QtGui, QtWidgets, level)
 
@@ -154,7 +168,7 @@ def run_agent(level: Level, checkpoint: str, delay_ms: int = 350):
                 print(f"[levelforge] replay finished: {self.status}")
                 return
             vec = flatten_obs(self.obs, self.env.level.energy)
-            action = agent.select_action(vec, greedy=True)
+            action = agent.select_action(vec, greedy=(explore <= 0.0))
             self.obs, _r, _done, info = self.env.step(action)
             self.status = f"{self.statustext()}  |  speed={self.delay_ms}ms/step (+/-)"
             self.update()
@@ -162,7 +176,13 @@ def run_agent(level: Level, checkpoint: str, delay_ms: int = 350):
         def tick(self):
             if self.paused:
                 return
-            self._step_once()
+            try:
+                self._step_once()
+            except Exception:
+                self.timer.stop()
+                traceback.print_exc()
+                self.status = "ERROR — see console (R restarts, Esc quits)"
+                self.update()
 
         def keyPressEvent(self, event):
             if event.key() == QtCore.Qt.Key_R:

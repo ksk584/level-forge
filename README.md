@@ -2,8 +2,6 @@
 
 **A Genetic Algorithm and Deep Q-Network Framework for Adversarial Game Level Generation**
 
-IS353IA – Artificial Intelligence and Machine Learning (Lab Part B) · RV College of Engineering
-Team: **Mrinal S (1RV24IS075)** · **Kiran S K (1RV24IS057)**
 
 LevelForge evolves *Sokoban-style* puzzle levels with a genetic algorithm (GA) and trains a
 custom Deep Q-Network (DQN) agent on them. A level's fitness is the **failure rate of the

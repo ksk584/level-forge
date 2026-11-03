@@ -71,12 +71,14 @@ python -m levelforge evaluate --checkpoint runs/ga_run/checkpoint_gen_11.pt --ou
 
 # Turn any saved level into a picture / play it / watch the agent
 python -m levelforge render --level runs/ga_run/levels_gen_9/hard_0.json --out hard_0.png
-python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json   # you control the agent
-python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --checkpoint runs/ga_run/checkpoint_gen_11.pt --delay 500  # slow replay; +/- adjusts speed live
+python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json --tk   # Tkinter window (recommended)
+python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --checkpoint runs/ga_run/checkpoint_gen_11.pt --tk --delay 400  # slow replay; +/- adjusts speed live
 
 # Summarise a run
 python -m levelforge summarise --metrics runs/ga_run/metrics.jsonl
 ```
+
+Prefer `--tk` (Tkinter, stdlib): pygame has no Python 3.14 wheel, and Qt windows may hide behind other windows; the Tk window is centred on screen with focus.
 
 Runs write to `runs/<name>/`: `config.json`, `metrics.jsonl`, per-generation checkpoints, and
 the hardest evolved levels (`levels_gen_*/hard_*.json`) so the adversarial cases can be re-used

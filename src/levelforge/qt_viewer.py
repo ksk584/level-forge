@@ -100,7 +100,10 @@ def _window(QtWidgets, board, title):
     window = QtWidgets.QMainWindow()
     window.setCentralWidget(board)
     window.setWindowTitle(title)
-    window.show()
+    window.showNormal()   # never start minimised/hidden
+    window.raise_()       # pull in front of other windows
+    window.activateWindow()  # give it keyboard focus where possible
+    return window
 
 
 def run(level: Level):
@@ -115,6 +118,7 @@ def run(level: Level):
     Board = _make_board_cls(QtCore, QtGui, QtWidgets, level)
     board = Board()
     _window(QtWidgets, board, "LevelForge — arrows/WASD move, R reset, Esc quit")
+    print("[levelforge] game window opened — if it is behind other windows, press Alt+Tab or click the LevelForge window on your taskbar.")
     sys.exit(app.exec_())
 
 

@@ -73,6 +73,10 @@ def cmd_render(args):
 
 def cmd_watch(args):
     level = Level.load_json(args.level)
+    if args.tk:
+        from .tk_viewer import run_agent
+        run_agent(level, args.checkpoint, delay_ms=args.delay, explore=args.explore, seed=args.seed)
+        return
     if args.text:
         from .replay import run_text
         run_text(level, args.checkpoint, delay_ms=args.delay, max_steps=args.max_steps,
@@ -83,8 +87,12 @@ def cmd_watch(args):
 
 
 def cmd_play(args):
-    from .qt_viewer import run
     level = Level.load_json(args.level)
+    if args.tk:
+        from .tk_viewer import run
+        run(level)
+        return
+    from .qt_viewer import run
     run(level)
 
 
@@ -163,8 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--title", default=None)
     r.set_defaults(func=cmd_render)
 
-    p = sub.add_parser("play", help="Interactive viewer (PyQt5) — you play the level")
+    p = sub.add_parser("play", help="Interactive viewer — you play the level")
     p.add_argument("--level", required=True)
+    p.add_argument("--tk", action="store_true", help="use the Tkinter viewer (no Qt required, recommended)")
     p.set_defaults(func=cmd_play)
 
     w = sub.add_parser("watch", help="Watch the trained DQN agent replay a level (PyQt5)")
@@ -175,6 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--max-steps", type=int, default=500, help="step cap for --text mode")
     w.add_argument("--explore", type=float, default=0.0, help="exploration epsilon for replay (0 = pure greedy). Try 0.2-0.3 to see the agent move when undertrained")
     w.add_argument("--seed", type=int, default=0, help="RNG seed for --explore sampling")
+    w.add_argument("--tk", action="store_true", help="use the Tkinter viewer (no Qt required, recommended)")
     w.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("summarise", help="Summarise a metrics.jsonl file")

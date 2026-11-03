@@ -71,6 +71,12 @@ def cmd_render(args):
     print(f"[levelforge] wrote {args.out}")
 
 
+def cmd_watch(args):
+    from .qt_viewer import run_agent
+    level = Level.load_json(args.level)
+    run_agent(level, args.checkpoint, delay_ms=args.delay)
+
+
 def cmd_play(args):
     from .qt_viewer import run
     level = Level.load_json(args.level)
@@ -152,9 +158,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--title", default=None)
     r.set_defaults(func=cmd_render)
 
-    p = sub.add_parser("play", help="Interactive viewer (PyQt5)")
+    p = sub.add_parser("play", help="Interactive viewer (PyQt5) — you play the level")
     p.add_argument("--level", required=True)
     p.set_defaults(func=cmd_play)
+
+    w = sub.add_parser("watch", help="Watch the trained DQN agent replay a level (PyQt5)")
+    w.add_argument("--level", required=True)
+    w.add_argument("--checkpoint", required=True, help="path to a checkpoint .pt written by evolve/train-baseline")
+    w.add_argument("--delay", type=int, default=200, help="milliseconds between agent moves")
+    w.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("summarise", help="Summarise a metrics.jsonl file")
     s.add_argument("--metrics", required=True)

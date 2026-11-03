@@ -1,7 +1,12 @@
-"""Optional interactive viewer using PyQt5 (already installed in this env).
+"""Interactive viewer using PyQt5 (already installed in this env).
 
-Launch with:  python -m levelforge play --level path/to/level.json
-Controls:     Arrow keys / WASD move, R reset, Esc quit.
+Play yourself:
+    python -m levelforge play  --level path/to/level.json
+    Controls: Arrow keys / WASD move, R reset, Esc quit.
+
+Watch the trained agent replay a level:
+    python -m levelforge watch --level path/to/level.json --checkpoint checkpoint_gen_N.pt [--delay 200]
+    Controls: R restart, space pause/resume, Esc quit.
 """
 
 from __future__ import annotations
@@ -13,21 +18,23 @@ from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_NORMAL, Level
 CELL = 34
 
 
-def run(level: Level):
-    try:
-        from PyQt5 import QtCore, QtGui, QtWidgets
-    except ImportError as e:  # pragma: no cover
-        print("PyQt5 is not installed; use `python -m levelforge render --level ... --out level.png` instead.")
-        raise SystemExit(2) from e
-
+def _make_board_cls(QtCore, QtGui, QtWidgets, level):
     from .environment import SokobanEnv
 
     class Board(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
             self.env = SokobanEnv(level, max_steps=10**9)
-            self.setFixedSize(level.width * CELL + 2, level.height * CELL + 2)
+            self.setFixedSize(level.width * CELL + 2, level.height * CELL + 2 + 28)
             self.setFocusPolicy(QtCore.Qt.StrongFocus)
+            self.status = ""
+
+        def statustext(self):
+            lv = self.env.level
+            if self.env.done:
+                outcome = "SOLVED!" if self.env.failure is None else f"FAILED ({self.env.failure})"
+                return f"{outcome}  |  steps={self.env.steps}  |  box cost logged"
+            return f"energy={lv.energy}  |  boxes on goals={lv.boxes_on_goals()}/{self.env.box_total}  |  step={self.env.steps}"
 
         def paintEvent(self, event):
             painter = QtGui.QPainter(self)
@@ -52,6 +59,10 @@ def run(level: Level):
             ax, ay = lv.agent
             painter.setBrush(QtGui.QColor("#2563eb"))
             painter.drawEllipse(ax * CELL + 4, ay * CELL + 4, CELL - 9, CELL - 9)
+            # status strip
+            painter.fillRect(QtCore.QRect(0, lv.height * CELL, self.width(), 28), QtGui.QColor("#0f172a"))
+            painter.setPen(QtGui.QColor("#e2e8f0"))
+            painter.drawText(8, lv.height * CELL + 19, self.status or self.statustext())
             painter.end()
 
         def keyPressEvent(self, event):
@@ -68,16 +79,90 @@ def run(level: Level):
             if event.key() == QtCore.Qt.Key_Escape:
                 QtWidgets.qApp.quit()
                 return
-            if event.key() in keys:
+            if event.key() in keys and not self.env.done:
                 self.env.step(keys[event.key()])
                 self.update()
-                lv = self.env.level
-                self.window().setWindowTitle(f"LevelForge | energy={lv.energy} | boxes on goals={lv.boxes_on_goals()}/{self.env.box_total} | step={self.env.steps}")
 
-    app = QtWidgets.QApplication(sys.argv)
-    board = Board()
+    return Board
+
+
+def _window(QtWidgets, board, title):
     window = QtWidgets.QMainWindow()
     window.setCentralWidget(board)
-    window.setWindowTitle("LevelForge — arrows/WASD move, R reset, Esc quit")
+    window.setWindowTitle(title)
     window.show()
+
+
+def run(level: Level):
+    try:
+        from PyQt5 import QtCore, QtGui, QtWidgets
+    except ImportError as e:  # pragma: no cover
+        print("PyQt5 is not installed; use `python -m levelforge render --level ... --out level.png` instead.")
+        raise SystemExit(2) from e
+
+    app = QtWidgets.QApplication(sys.argv)
+    Board = _make_board_cls(QtCore, QtGui, QtWidgets, level)
+    board = Board()
+    _window(QtWidgets, board, "LevelForge — arrows/WASD move, R reset, Esc quit")
+    sys.exit(app.exec_())
+
+
+def run_agent(level: Level, checkpoint: str, delay_ms: int = 200):
+    try:
+        from PyQt5 import QtCore, QtGui, QtWidgets
+    except ImportError as e:  # pragma: no cover
+        print("PyQt5 is not installed; use `python -m levelforge render --level ... --out level.png` instead.")
+        raise SystemExit(2) from e
+
+    import numpy as np
+    from .dqn import DQNAgent, flatten_obs
+
+    agent = DQNAgent.load(checkpoint, device="cpu")
+
+    app = QtWidgets.QApplication(sys.argv)
+    Board = _make_board_cls(QtCore, QtGui, QtWidgets, level)
+
+    class ReplayBoard(Board):
+        def __init__(self):
+            super().__init__()
+            self.env.max_steps = 500  # wandering agents must not spin forever
+            self.obs, _ = self.env.reset()
+            self.paused = False
+            self.timer = QtCore.QTimer(self)
+            self.timer.timeout.connect(self.tick)
+            self.timer.start(max(20, int(delay_ms)))
+            self._step_once()
+
+        def _step_once(self):
+            if self.env.done:
+                outcome = "SOLVED" if self.env.failure is None else f"FAILED ({self.env.failure})"
+                self.status = f"{outcome} after {self.env.steps} steps | R restart | Esc quit"
+                self.timer.stop()
+                self.update()
+                return
+            vec = flatten_obs(self.obs, self.env.level.energy)
+            action = agent.select_action(vec, greedy=True)
+            self.obs, _r, _done, info = self.env.step(action)
+            self.status = self.statustext()
+            self.update()
+
+        def tick(self):
+            if self.paused:
+                return
+            self._step_once()
+
+        def keyPressEvent(self, event):
+            if event.key() == QtCore.Qt.Key_R:
+                self.obs, _ = self.env.reset()
+                self.status = ""
+                self.timer.start(max(20, int(delay_ms)))
+                self.update()
+                return
+            if event.key() == QtCore.Qt.Key_Space:
+                self.paused = not self.paused
+                return
+            super().keyPressEvent(event)
+
+    board = ReplayBoard()
+    _window(QtWidgets, board, "LevelForge — DQN replay | space pause | R replay | Esc quit")
     sys.exit(app.exec_())

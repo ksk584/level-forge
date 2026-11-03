@@ -83,6 +83,12 @@ python -m levelforge summarise --metrics runs/ga_run/metrics.jsonl
 
 **Honest note on training.** Sokoban is PSPACE-complete; an agent trained for minutes on CPU will not solve 8×8 boards. Behaviour cloning from the generator's traced solutions was implemented but cannot succeed on scrambled boards: the expert visits the same states with contradictory labels (7,500 samples collapse to 2,023 unique states with 3,390 conflicts). The curriculum that works is: start on 7×7 with 1 box, train with `--shaping`, then escalate size/boxes. For presenting "the AI plays the game", use `watch --solver` — A* with deadlock pruning always finds the optimal solution instantly on generated boards.
 
+# Quick toy demo (no training, Tkinter window) — great for a viva/demo
+python -m levelforge play --level levels/toy_1.json --tk            # push once onto the goal
+python -m levelforge play --level levels/toy_3_heavy.json --tk      # heavy box costs 3 energy
+python -m levelforge play --level levels/toy_5_two_boxes.json --tk  # two boxes, two goals
+python scripts/make_toy_instances.py                                 # regenerate/verify the toys
+
 Prefer `--tk` (Tkinter, stdlib): pygame has no Python 3.14 wheel, and Qt windows may hide behind other windows; the Tk window is centred on screen with focus.
 
 Runs write to `runs/<name>/`: `config.json`, `metrics.jsonl`, per-generation checkpoints, and

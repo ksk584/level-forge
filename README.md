@@ -27,6 +27,7 @@ Environment Design (UED), but discrete, interpretable and built from first princ
 | Co-evolutionary loop (fitness = agent failure rate; top-k hardest levels → retraining) | ✔ | `coevolution.py` |
 | Evaluation: held-out SR, failure-discovery efficiency, breakdown, diversity, solvability yield | ✔ | `evaluation.py`, `training.py` |
 | Rendering (PNG) + interactive PyQt5 viewer | ✔ | `visualize.py`, `qt_viewer.py` |
+| Watch mode: greedy DQN replay with pause/restart | ✔ | `python -m levelforge watch` |
 | Test suite (19 tests) | ✔ | `tests/` |
 
 No pre-built RL / evolutionary-computation libraries are used — the algorithms are implemented
@@ -68,9 +69,10 @@ python -m levelforge evolve --generations 12 --population 24 --size 10 --generat
 # Evaluate a checkpoint on the held-out set
 python -m levelforge evaluate --checkpoint runs/ga_run/checkpoint_gen_11.pt --out runs/ga_run
 
-# Turn any saved level into a picture / play it interactively
+# Turn any saved level into a picture / play it / watch the agent
 python -m levelforge render --level runs/ga_run/levels_gen_9/hard_0.json --out hard_0.png
-python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json
+python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json   # you control the agent
+python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --checkpoint runs/ga_run/checkpoint_gen_11.pt
 
 # Summarise a run
 python -m levelforge summarise --metrics runs/ga_run/metrics.jsonl

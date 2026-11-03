@@ -130,6 +130,22 @@ Mann–Whitney U for the headline comparison.
 
 ---
 
+## Running on Google Colab
+
+No installs on your PC needed — open `notebooks/LevelForge_Colab.ipynb` in Colab.
+
+**Quickest import (Google Drive, no GitHub account):**
+1. Zip the project: `cd C:\Users\krish\projects; Compress-Archive -Path LevelForge -DestinationPath LevelForge.zip`
+2. Upload `LevelForge.zip` to your Google Drive (drag into drive.google.com).
+3. Open the notebook in Colab and run the cells top to bottom (mount Drive → unzip → `%pip install -e .` → done).
+
+**Alternative (GitHub):**
+1. Create an empty repo on github.com (e.g. `LevelForge`).
+2. `git remote add origin https://github.com/<YOU>/LevelForge.git` then `git push -u origin master` (or `main`).
+3. In the notebook, comment out the Drive-unzip cell and uncomment/adjust the `git clone` cell.
+
+The notebook covers: verifying the code, the GA co-evolution run (GA vs random ablation), evaluation table, plots for the report, and downloading `results.zip`. Notes: GUI viewers don't render in Colab (use `render`/`solve`/`watch --text`), and free Colab disconnects after ~90 min idle — run short stages and download early.
+
 ## Repository layout
 
 ```

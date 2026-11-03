@@ -27,6 +27,7 @@ Environment Design (UED), but discrete, interpretable and built from first princ
 | Co-evolutionary loop (fitness = agent failure rate; top-k hardest levels → retraining) | ✔ | `coevolution.py` |
 | Evaluation: held-out SR, failure-discovery efficiency, breakdown, diversity, solvability yield | ✔ | `evaluation.py`, `training.py` |
 | Rendering (PNG) + interactive PyQt5 viewer | ✔ | `visualize.py`, `qt_viewer.py` |
+| A* planner (perfect "AI" for demos/evaluation) | ✔ | `solver.py` (`solve`, `watch --solver`) |
 | Watch mode: greedy DQN replay with pause/restart | ✔ | `python -m levelforge watch` |
 | Test suite (19 tests) | ✔ | `tests/` |
 
@@ -69,14 +70,18 @@ python -m levelforge evolve --generations 12 --population 24 --size 10 --generat
 # Evaluate a checkpoint on the held-out set
 python -m levelforge evaluate --checkpoint runs/ga_run/checkpoint_gen_11.pt --out runs/ga_run
 
-# Turn any saved level into a picture / play it / watch the agent
+# Turn any saved level into a picture / play it / watch it played
 python -m levelforge render --level runs/ga_run/levels_gen_9/hard_0.json --out hard_0.png
-python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json --tk   # Tkinter window (recommended)
-python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --checkpoint runs/ga_run/checkpoint_gen_11.pt --tk --delay 400  # slow replay; +/- adjusts speed live
+python -m levelforge play   --level runs/ga_run/levels_gen_9/hard_0.json --tk
+python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --solver --tk   # A* solver replay (perfect player)
+python -m levelforge watch  --level runs/ga_run/levels_gen_9/hard_0.json --checkpoint runs/ga_run/checkpoint_gen_11.pt --tk --delay 400 --explore 0.2
+python -m levelforge solve  --level runs/ga_run/levels_gen_9/hard_0.json   # print solution length
 
 # Summarise a run
 python -m levelforge summarise --metrics runs/ga_run/metrics.jsonl
 ```
+
+**Honest note on training.** Sokoban is PSPACE-complete; an agent trained for minutes on CPU will not solve 8×8 boards. Behaviour cloning from the generator's traced solutions was implemented but cannot succeed on scrambled boards: the expert visits the same states with contradictory labels (7,500 samples collapse to 2,023 unique states with 3,390 conflicts). The curriculum that works is: start on 7×7 with 1 box, train with `--shaping`, then escalate size/boxes. For presenting "the AI plays the game", use `watch --solver` — A* with deadlock pruning always finds the optimal solution instantly on generated boards.
 
 Prefer `--tk` (Tkinter, stdlib): pygame has no Python 3.14 wheel, and Qt windows may hide behind other windows; the Tk window is centred on screen with focus.
 

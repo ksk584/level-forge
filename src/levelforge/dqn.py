@@ -22,14 +22,50 @@ def state_dim(height: int, width: int) -> int:
     return N_CHANNELS * height * width + 1  # +1 for normalised energy
 
 
+def build_q_network(height: int, width: int, arch: str = "mlp", hidden: int = 64):
+    if arch == "cnn":
+        return QNetworkCNN(height, width, hidden_fc=hidden)
+    if arch == "mlp":
+        return QNetwork(state_dim(height, width), hidden=hidden)
+    raise ValueError(f"unknown arch: {arch}")
+
+
+class QNetworkCNN(nn.Module):
+    """CNN over the 6-channel one-hot grid + energy scalar.
+
+    Sokoban is spatial: a 3x3 receptive field already matches 'am I pushing into something'.
+    Accepts the same flattened observation vector as QNetwork (adapter reshapes inside).
+    """
+
+    def __init__(self, height: int, width: int, channels: int = N_CHANNELS, hidden_fc: int = 64):
+        super().__init__()
+        self.height, self.width, self.channels = height, width, channels
+        self.conv1 = nn.Conv2d(channels, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.fc1 = nn.Linear(64 * height * width + 1, hidden_fc)
+        self.fc2 = nn.Linear(hidden_fc, ACTION_DIM)
+
+    def forward(self, flat):
+        x = flat[:, : self.channels * self.height * self.width]
+        x = x.view(-1, self.channels, self.height, self.width)
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = x.flatten(1)
+        x = torch.cat([x, flat[:, -1:]], dim=1)
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
+
+
 class QNetwork(nn.Module):
     """MLP: input -> 64 -> ReLU -> 64 -> ReLU -> 4 Q-values (synopsis 5.3)."""
 
-    def __init__(self, input_dim: int):
+    def __init__(self, input_dim: int, hidden: int = 64):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, ACTION_DIM)
+        self.fc1 = nn.Linear(input_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.fc3 = nn.Linear(hidden, ACTION_DIM)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -78,8 +114,11 @@ class DQNAgent:
         target_sync_steps: int = 500,
         device: Optional[str] = None,
         seed: int = 0,
+        arch: str = "mlp",
+        hidden: int = 64,
     ):
         self.height, self.width = height, width
+        self.arch, self.hidden = arch, hidden
         self.input_dim = state_dim(height, width)
         self.gamma = gamma
         self.batch_size = batch_size
@@ -88,8 +127,8 @@ class DQNAgent:
 
         torch.manual_seed(seed)
         np.random.seed(seed)
-        self.policy_net = QNetwork(self.input_dim).to(self.device)
-        self.target_net = QNetwork(self.input_dim).to(self.device)
+        self.policy_net = build_q_network(height, width, arch=arch, hidden=hidden).to(self.device)
+        self.target_net = build_q_network(height, width, arch=arch, hidden=hidden).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
@@ -147,14 +186,34 @@ class DQNAgent:
                 "height": self.height,
                 "width": self.width,
                 "epsilon": self.epsilon,
+                "arch": self.arch,
+                "hidden": self.hidden,
             },
             path,
         )
 
     @classmethod
+    def init_from(cls, path, height: int, width: int,
+                  device: Optional[str] = None, seed: int = 0) -> "DQNAgent":
+        """Construct a fresh agent whose weights are copied from an existing checkpoint
+        (e.g. a behaviour-cloned policy) — used to warm-start DQN training."""
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        h = int(ckpt.get("height", height))
+        w = int(ckpt.get("width", width))
+        arch = ckpt.get("arch", "mlp")
+        hidden = int(ckpt.get("hidden", 64))
+        agent = cls(h, w, device=device, seed=seed, arch=arch, hidden=hidden)
+        agent.policy_net.load_state_dict(ckpt["policy_state_dict"])
+        agent.target_net.load_state_dict(ckpt.get("target_state_dict", ckpt["policy_state_dict"]))
+        agent.target_net.eval()
+        agent.epsilon = ckpt.get("epsilon", 0.05)
+        return agent
+
+    @classmethod
     def load(cls, path, device: Optional[str] = None, seed: int = 0) -> "DQNAgent":
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        agent = cls(ckpt["height"], ckpt["width"], device=device, seed=seed)
+        agent = cls(ckpt["height"], ckpt["width"], device=device, seed=seed,
+                    arch=ckpt.get("arch", "mlp"), hidden=int(ckpt.get("hidden", 64)))
         agent.policy_net.load_state_dict(ckpt["policy_state_dict"])
         agent.target_net.load_state_dict(ckpt["target_state_dict"])
         agent.target_net.eval()

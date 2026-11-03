@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     "max_nodes": 30000,
     "seed": 42,
     "heldout_size": 20,
+    "init_from": None,
 }
 
 
@@ -82,7 +83,11 @@ def run_coevolution(
         for _ in range(cfg["heldout_size"])
     ]
 
-    agent = DQNAgent(cfg["size"], cfg["size"], seed=seed)
+    if cfg.get("init_from"):
+        agent = DQNAgent.init_from(cfg["init_from"], cfg["size"], cfg["size"], seed=seed)
+        print(f"[levelforge] warm-starting DQN from {cfg['init_from']}")
+    else:
+        agent = DQNAgent(cfg["size"], cfg["size"], seed=seed)
 
     print(f"[levelforge] pretraining DQN for {cfg['pretrain_episodes']} episodes ...")
     train_on_levels(agent, pool, episodes=cfg["pretrain_episodes"], max_steps=cfg["max_steps"],

@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_KINDS, BOX_NORMAL, Level
+from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_KINDS, BOX_NORMAL, PUSH_COST, Level
 from .solvability import is_solvable
 
 
@@ -43,6 +43,8 @@ def scramble_level(
     fragile_prob: float = 0.20,
     scramble_steps: int = 250,
     min_pulls: int = 4,
+    energy_slack: int = 8,
+    trace: Optional[list] = None,
 ) -> Level:
     """Generate a *guaranteed solvable* level by reverse Sokoban play.
 
@@ -52,6 +54,12 @@ def scramble_level(
     a legal forward solution, so the generated puzzle is solvable by
     construction.  Unlike naive box-shuffling, the agent/box kinematics are
     fully modelled, so the reversed solution can never get stuck.
+
+    Energy is set to the exact cost of the constructing solution plus
+    ``energy_slack``, so every generated level is solvable within budget.
+    If ``trace`` is provided, the reverse-step direction per move (as an
+    action index, ``0=up 1=down 2=left 3=right``) is appended to it — use
+    ``expert.forward_actions()`` to obtain the matching forward actions.
     """
     h = w = size
     walls = np.zeros((h, w), dtype=bool)
@@ -62,55 +70,12 @@ def scramble_level(
     walls |= interior
     free_cells = [(x, y) for y in range(h) for x in range(w) if not walls[y, x]]
     interior_cells = (h - 2) * (w - 2)
-    if len(free_cells) < max(4 * n_boxes + 6, int(interior_cells * 0.60)):
+    if len(free_cells) < max(2 * n_boxes + 6, int(interior_cells * 0.45)):
         raise ValueError("too few free cells")
 
     goals_idx = rng.choice(len(free_cells), size=n_boxes, replace=False)
     goals = [free_cells[i] for i in goals_idx]
     box_pos = list(goals)
-
-    def cell_free(x, y, exclude):
-        return 0 <= x < w and 0 <= y < h and not walls[y, x] and (x, y) not in exclude
-
-    agent = free_cells[int(rng.integers(0, len(free_cells)))]
-    dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-    pulls = 0
-    # A reverse move pair is the exact inverse of a forward push:
-    #   push:  agent A, box A+v, target A+2v   ->  agent A+v, box A+2v
-    #   pull:  agent at X, box at X+d (d = -v); if Z = X-d is free, the push is
-    #          undone: agent -> Z, box -> X.
-    for _ in range(scramble_steps):
-        box_set = set(box_pos)
-        # Enumerate legal reverse moves.
-        pulls_available, walks_available = [], []
-        for dx, dy in dirs:
-            # Pull: box adjacent in direction d; agent steps away, box follows.
-            bx, by = agent[0] + dx, agent[1] + dy
-            zx, zy = agent[0] - dx, agent[1] - dy
-            if (bx, by) in box_set and cell_free(zx, zy, box_set):
-                pulls_available.append((dx, dy))
-            # Walk: adjacent cell free of walls and boxes.
-            wx, wy = agent[0] + dx, agent[1] + dy
-            if cell_free(wx, wy, box_set):
-                walks_available.append((dx, dy))
-        do_pull = pulls_available and (not walks_available or rng.random() < 0.50)
-        if do_pull:
-            dx, dy = pulls_available[int(rng.integers(0, len(pulls_available)))]
-            bx, by = agent[0] + dx, agent[1] + dy
-            zx, zy = agent[0] - dx, agent[1] - dy
-            idx = box_pos.index((bx, by))
-            box_pos[idx] = agent  # box moves into the agent's vacated cell
-            agent = (zx, zy)
-            pulls += 1
-        elif walks_available:
-            dx, dy = walks_available[int(rng.integers(0, len(walks_available)))]
-            agent = (agent[0] + dx, agent[1] + dy)
-        else:
-            break
-    if pulls < min_pulls:
-        raise ValueError("scramble did not displace boxes enough")
-    if set(box_pos) == set(goals):
-        raise ValueError("scramble left every box on a goal")
 
     # Assign payload kinds (at most one heavy and one fragile for balance).
     kinds = [BOX_NORMAL] * n_boxes
@@ -122,10 +87,128 @@ def scramble_level(
         if fragile_candidates:
             fragile_idx = int(rng.choice(fragile_candidates))
             kinds[fragile_idx] = BOX_FRAGILE
-    boxes = [(x, y, k) for (x, y), k in zip(box_pos, kinds)]
 
-    heavy_count = sum(1 for k in kinds if k == BOX_HEAVY)
-    energy = 12 + 5 * n_boxes + 2 * heavy_count
+    def cell_free(x, y, exclude):
+        return 0 <= x < w and 0 <= y < h and not walls[y, x] and (x, y) not in exclude
+
+    dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+    dir_to_action = {(0, -1): 0, (0, 1): 1, (-1, 0): 2, (1, 0): 3}
+
+    # Start the agent adjacent to a box (or the chain stalls immediately).
+    adj_cells = []
+    for bx, by in box_pos:
+        for dx, dy in dirs:
+            ax, ay = bx + dx, by + dy
+            if cell_free(ax, ay, set(box_pos)):
+                adj_cells.append((ax, ay))
+    if not adj_cells:
+        raise ValueError("no cell adjacent to any box")
+    agent = adj_cells[int(rng.integers(0, len(adj_cells)))]
+    pulls = 0
+    push_energy = 0
+
+    # Boxes must never occupy non-goal crush cells (corners / wall-lines):
+    # the forward env treats those as deadlocks (and fragile boxes shatter),
+    # which would break the double-entry guarantee of the scramble.
+    from .solvability import crush_cells
+    crush = crush_cells(Level(walls, list(goals), [], goals[0], 0))
+
+    # --- BFS from the agent to any cell from which a pull is guaranteed legal. ---
+    def cell_wall(x, y):
+        return x < 0 or y < 0 or x >= w or y >= h or walls[y, x]
+
+    def pull_targets(box_set):
+        """Map agent-position -> (box index, pull direction f).
+
+        A pull in direction f is legal with the agent at box - f, provided the
+        cell on the far side (box - 2f) is in the board, free of walls and of
+        other boxes, and the destination cell (box, where the box lands... the
+        box moves into the agent's old cell) is not a crush cell.
+        """
+        targets = {}
+        for i, (bx, by) in enumerate(box_pos):
+            for f in dirs:
+                px, py = bx - f[0], by - f[1]           # agent stands here
+                zx, zy = bx - 2 * f[0], by - 2 * f[1]   # pull destination (box goes to agent's old cell)
+                if cell_wall(px, py) or cell_wall(zx, zy):
+                    continue
+                if (px, py) in box_set:
+                    continue
+                if (zx, zy) in box_set:
+                    continue
+                # The box moves into the agent's cell; that destination must
+                # not be a non-goal crush cell.
+                if (px, py) in crush:
+                    continue
+                targets[(px, py)] = (i, f)
+        return targets
+
+    def bfs(start, goals_set):
+        """Find a path (list of action indices) from start to any cell in goals_set."""
+        from collections import deque
+        box_set = set(box_pos)
+        prev = {start: None}  # cell -> (prev_cell, action)
+        q = deque([start])
+        while q:
+            cur = q.popleft()
+            if cur in goals_set:
+                path = []
+                node = cur
+                while prev[node] is not None:
+                    pc, act = prev[node]
+                    path.append(act)
+                    node = pc
+                return list(reversed(path)), cur
+            for dx, dy in dirs:
+                nxt = (cur[0] + dx, cur[1] + dy)
+                if cell_wall(nxt[0], nxt[1]) or nxt in box_set or nxt in prev:
+                    continue
+                prev[nxt] = (cur, dir_to_action[(dx, dy)])
+                q.append(nxt)
+        return None, None
+
+    # Reverse Sokoban play (from the solved state): walk to any cell where a
+    # pull is legal, execute the pull, repeat.  Guaranteed productive.
+    for _ in range(scramble_steps):
+        if pulls >= scramble_steps:
+            break
+        box_set = set(box_pos)
+        targets = pull_targets(box_set)
+        if not targets:
+            import os
+            if os.environ.get("LEVELFORGE_DEBUG"):
+                print(f"[debug] pulls={pulls} box_pos={box_pos} goals={goals}")
+                print(walls.astype(int))
+                print("crush:", crush)
+            raise ValueError("no pull is legal anywhere")
+        path, dest = bfs(agent, set(targets))
+        if dest is None:
+            raise ValueError("pull positions are unreachable")
+        for act in path:
+            dx, dy = dirs[act]
+            agent = (agent[0] + dx, agent[1] + dy)
+            if trace is not None:
+                trace.append(act)
+        i, f = targets[dest]
+        bx, by = box_pos[i]
+        zx, zy = dest[0] - f[0], dest[1] - f[1]
+        box_pos[i] = dest  # box moves into the agent's vacated cell
+        agent = (zx, zy)
+        push_energy += PUSH_COST[kinds[i]]
+        pulls += 1
+        if trace is not None:
+            # The agent stepped opposite to f.
+            trace.append(dir_to_action[(-f[0], -f[1])])
+    if pulls < min_pulls:
+        import os
+        if os.environ.get("LEVELFORGE_DEBUG"):
+            print(f"[debug] pulls={pulls} agent={agent} boxes={box_pos} walls=\\n{walls.astype(int)}")
+        raise ValueError("scramble did not displace boxes enough")
+    if set(box_pos) == set(goals):
+        raise ValueError("scramble left every box on a goal")
+
+    boxes = [(x, y, k) for (x, y), k in zip(box_pos, kinds)]
+    energy = push_energy + energy_slack
     return Level(walls, list(goals), boxes, agent, energy)
 
 
@@ -158,7 +241,7 @@ def random_level(
                 walls[y, x] = True
     free = [c for c in main]
     interior = (h - 2) * (w - 2)
-    if len(free) < max(4 * n_boxes + 6, int(interior * 0.70)):
+    if len(free) < max(2 * n_boxes + 6, int(interior * 0.45)):
         raise ValueError("too few free cells")
     if len(free) < n_boxes * 4 + 1:
         raise ValueError("not enough room for boxes and goals")

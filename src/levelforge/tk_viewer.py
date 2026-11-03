@@ -27,7 +27,8 @@ _LABEL = {BOX_HEAVY: "H", BOX_FRAGILE: "F"}
 _DIR = {"Up": 0, "w": 0, "Down": 1, "s": 1, "Left": 2, "a": 2, "Right": 3, "d": 3}
 
 
-def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, seed: int):
+def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, seed: int,
+         solver_moves: list[int] | None = None):
     try:
         import tkinter as tk
     except ImportError as e:  # pragma: no cover
@@ -37,18 +38,29 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
     from .environment import SokobanEnv
     from .dqn import DQNAgent, flatten_obs
 
-    agent = None
-    if checkpoint:
-        import random
-        try:
-            agent = DQNAgent.load(checkpoint, device="cpu")
-        except Exception as e:
-            print(f"[levelforge] could not load checkpoint: {checkpoint}\n           {e}")
-            raise SystemExit(2) from e
-        agent.epsilon = max(0.0, min(1.0, explore))
-        random.seed(seed)
-
-    mode = "DQN replay" if agent else "You are playing"
+    if solver_moves is not None:
+        class SolverAgent:
+            def __init__(self, moves):
+                self._moves = list(moves)
+                self.epsilon = 0.0
+            def select_action(self, vec, greedy: bool = True):
+                return self._moves.pop(0) if self._moves else 0
+        agent = SolverAgent(solver_moves)
+        mode = "A* solver replay"
+    else:
+        agent = None
+        if checkpoint:
+            import random
+            try:
+                agent = DQNAgent.load(checkpoint, device="cpu")
+            except Exception as e:
+                print(f"[levelforge] could not load checkpoint: {checkpoint}\n           {e}")
+                raise SystemExit(2) from e
+            agent.epsilon = max(0.0, min(1.0, explore))
+            random.seed(seed)
+            mode = "DQN replay"
+        else:
+            mode = "You are playing"
     max_steps = 500 if agent else 10**9
     state = {
         "env": SokobanEnv(level, max_steps=max_steps),
@@ -164,6 +176,10 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         state["obs"], _ = state["env"].reset()
         state["after_id"] = root.after(state["delay"], agent_tick)
     root.mainloop()
+
+
+def run_solver(level: Level, moves: list[int], delay_ms: int = 250):
+    _run(level, checkpoint=None, delay_ms=delay_ms, explore=0.0, seed=0, solver_moves=moves)
 
 
 def run(level: Level):

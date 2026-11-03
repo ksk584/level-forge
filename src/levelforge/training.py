@@ -40,7 +40,10 @@ def generate_level_pool(
     return pool
 
 
-def episode_stats(agent: DQNAgent, env: SokobanEnv, train: bool = False) -> Dict:
+def episode_stats(agent: DQNAgent, env: SokobanEnv, train: bool = False,
+                  shaping: bool = False, shaping_weight: float = 0.5) -> Dict:
+    from .shaping import shaped_reward
+
     obs, _ = env.reset()
     total_reward = 0.0
     invalid_pushes = 0
@@ -49,7 +52,10 @@ def episode_stats(agent: DQNAgent, env: SokobanEnv, train: bool = False) -> Dict
         vec = flatten_obs(obs, env.level.energy)
         action = agent.select_action(vec, greedy=not train)
         if train:
+            level_before = env.level.copy() if shaping else None
             next_obs, reward, done, info = env.step(action)
+            if shaping:
+                reward = shaped_reward(reward, level_before, env.level, shaping_weight)
             agent.buffer.push(vec, action, reward, flatten_obs(next_obs, env.level.energy), done)
             agent.train_step()
             obs = next_obs
@@ -80,6 +86,8 @@ def train_on_levels(
     epsilon_decay_episodes: int = 200,
     seed: int = 0,
     level_weights: Optional[np.ndarray] = None,
+    shaping: bool = False,
+    shaping_weight: float = 0.5,
 ) -> List[Dict]:
     rng = np.random.default_rng(seed)
     history = []
@@ -90,7 +98,7 @@ def train_on_levels(
         else:
             level = levels[int(rng.integers(0, len(levels)))]
         env = SokobanEnv(level, max_steps=max_steps)
-        stats = episode_stats(agent, env, train=True)
+        stats = episode_stats(agent, env, train=True, shaping=shaping, shaping_weight=shaping_weight)
         stats["episode"] = ep
         stats["epsilon"] = agent.epsilon
         history.append(stats)

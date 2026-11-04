@@ -26,7 +26,9 @@ def cmd_train_baseline(args):
         agent = DQNAgent.init_from(args.init_from, args.size, args.size, seed=args.seed)
         print(f"[levelforge] warm-starting from {args.init_from}")
     else:
-        agent = DQNAgent(args.size, args.size, seed=args.seed)
+        agent = DQNAgent(args.size, args.size, seed=args.seed,
+                         arch=getattr(args, "arch", "cnn"),
+                         hidden=getattr(args, "hidden", 128))
     history = train_on_levels(agent, pool, episodes=args.episodes, max_steps=args.max_steps, seed=args.seed,
                               shaping=args.shaping, shaping_weight=args.shaping_weight)
     agent.save(out / "baseline.pt")
@@ -75,7 +77,12 @@ def cmd_pretrain_bc(args):
     t0 = time.time()
     X, y = generate_expert_dataset(args.levels, size=args.size, n_boxes=args.n_boxes,
                                    seed=args.seed, wall_frac=args.wall_frac,
-                                   heavy_prob=args.heavy_prob, fragile_prob=args.fragile_prob)
+                                   heavy_prob=args.heavy_prob, fragile_prob=args.fragile_prob,
+                                   use_solver=getattr(args, "use_solver", True),
+                                   multi_start=getattr(args, "multi_start", 2),
+                                   include_toys=getattr(args, "include_toys", True),
+                                   mix_boxes=getattr(args, "mix_boxes", False),
+                                   augment=getattr(args, "augment", False))
     print(f"[levelforge] collected {len(X)} expert steps from {args.levels} levels in {time.time() - t0:.1f}s")
 
     net = build_q_network(args.size, args.size, arch=args.arch, hidden=args.hidden)
@@ -90,6 +97,16 @@ def cmd_pretrain_bc(args):
     cut = max(1, int(0.9 * len(X)))
     tr_x, tr_y = X[idx[:cut]], y[idx[:cut]]
     va_x, va_y = X[idx[cut:]], y[idx[cut:]]
+
+    def chunked_argmax_acc(net, xs, ys, batch=4096):
+        """Accuracy without materialising one giant forward pass (OOM-safe)."""
+        net.eval()
+        correct = 0
+        with torch.no_grad():
+            for i in range(0, len(xs), batch):
+                pred = net(torch.from_numpy(xs[i:i + batch])).argmax(dim=1)
+                correct += int((pred == torch.from_numpy(ys[i:i + batch])).sum().item())
+        return correct / max(1, len(xs))
 
     history = []
     for epoch in range(args.epochs):
@@ -106,11 +123,9 @@ def cmd_pretrain_bc(args):
             opt.step()
             total += float(loss.item())
         net.eval()
-        with torch.no_grad():
-            pred = net(torch.from_numpy(va_x)).argmax(dim=1)
-            acc = float((pred == torch.from_numpy(va_y)).float().mean().item())
-            tpred = net(torch.from_numpy(tr_x)).argmax(dim=1)
-            tacc = float((tpred == torch.from_numpy(tr_y)).float().mean().item())
+        acc = chunked_argmax_acc(net, va_x, va_y)
+        tacc = chunked_argmax_acc(net, tr_x, tr_y)
+        net.train()
         history.append(acc)
         print(f"[levelforge] epoch {epoch + 1}/{args.epochs}  train_loss~{total:.1f}  train_acc={tacc:.3f}  val_action_acc={acc:.3f}")
 
@@ -233,6 +248,16 @@ def cmd_demo(args):
     run_coevolution(cfg, out_dir=args.out, generator="ga", name="demo")
 
 
+def _parse_delay(val: str) -> int:
+    try:
+        f = float(val)
+        if f <= 10.0:
+            return max(30, int(f * 1000))
+        return max(30, int(f))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid delay value: {val}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="levelforge", description="LevelForge: GA + DQN adversarial level generation for Sokoban")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -246,6 +271,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--max-steps", type=int, default=300)
     t.add_argument("--seed", type=int, default=42)
     t.add_argument("--out", default="runs/baseline")
+    t.add_argument("--arch", choices=["cnn", "mlp"], default="cnn", help="network architecture")
+    t.add_argument("--hidden", type=int, default=128, help="hidden layer size")
     t.add_argument("--init-from", default=None, help="warm-start weights from a BC/DQN checkpoint (e.g. runs/bc/bc_policy.pt)")
     t.add_argument("--shaping", action="store_true", help="use potential-based distance shaping (recommended)")
     t.add_argument("--shaping-weight", type=float, default=0.5)
@@ -296,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="Watch the trained DQN agent replay a level (PyQt5)")
     w.add_argument("--level", required=True)
     w.add_argument("--checkpoint", default=None, help="path to a checkpoint .pt written by evolve/train-baseline (not needed with --solver)")
-    w.add_argument("--delay", type=int, default=350, help="milliseconds between agent moves (30-5000); +/- keys adjust live")
+    w.add_argument("--delay", type=_parse_delay, default=350, help="milliseconds (e.g. 300) or seconds (e.g. 0.3) between agent moves; +/- keys adjust live")
     w.add_argument("--text", action="store_true", help="headless mode: print board frames to the terminal instead of opening a window")
     w.add_argument("--max-steps", type=int, default=500, help="step cap for --text mode")
     w.add_argument("--explore", type=float, default=0.0, help="exploration epsilon for replay (0 = pure greedy). Try 0.2-0.3 to see the agent move when undertrained")
@@ -325,6 +352,13 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--max-steps", type=int, default=300)
     b.add_argument("--seed", type=int, default=0)
     b.add_argument("--out", default="runs/bc")
+    b.add_argument("--use-solver", action="store_true", default=True, help="use optimal A* paths instead of scramble traces")
+    b.add_argument("--no-solver", dest="use_solver", action="store_false", help="use legacy reverse-scramble trace")
+    b.add_argument("--multi-start", type=int, default=2, help="alternative start positions per level for robust navigation")
+    b.add_argument("--include-toys", action="store_true", default=True, help="include hand-authored toy levels of matching size")
+    b.add_argument("--no-toys", dest="include_toys", action="store_false")
+    b.add_argument("--mix-boxes", action="store_true", help="include both 1-box and 2-box levels for multi-box capability")
+    b.add_argument("--augment", action="store_true", help="augment dataset with D4 dihedral symmetries (rotations/reflections)")
     b.set_defaults(func=cmd_pretrain_bc)
 
     s = sub.add_parser("solve", help="Solve a level with A* and print stats")

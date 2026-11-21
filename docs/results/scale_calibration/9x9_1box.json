@@ -1,0 +1,43 @@
+{
+  "variant": "9x9_1box",
+  "cfg": {
+    "size": 9,
+    "n_boxes": 1,
+    "max_steps": 160
+  },
+  "gen_s_per_level": 0.005,
+  "optimal_moves_mean": 8.1,
+  "optimal_moves_p90": 14.0,
+  "curve": [
+    {
+      "timesteps": 251904,
+      "heldout_sr": 0.09,
+      "elapsed_s": 714.2
+    },
+    {
+      "timesteps": 503808,
+      "heldout_sr": 0.1125,
+      "elapsed_s": 1436.7
+    },
+    {
+      "timesteps": 755712,
+      "heldout_sr": 0.205,
+      "elapsed_s": 2582.6
+    },
+    {
+      "timesteps": 1007616,
+      "heldout_sr": 0.25,
+      "elapsed_s": 3879.8
+    },
+    {
+      "timesteps": 1259520,
+      "heldout_sr": 0.3325,
+      "elapsed_s": 4831.1
+    },
+    {
+      "timesteps": 1511424,
+      "heldout_sr": 0.4225,
+      "elapsed_s": 5751.7
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "variant": "7x7_2box",
+  "cfg": {
+    "size": 7,
+    "n_boxes": 2,
+    "max_steps": 160
+  },
+  "gen_s_per_level": 0.008,
+  "optimal_moves_mean": 9.51,
+  "optimal_moves_p90": 14.100000000000009,
+  "curve": [
+    {
+      "timesteps": 251904,
+      "heldout_sr": 0.0775,
+      "elapsed_s": 462.5
+    },
+    {
+      "timesteps": 503808,
+      "heldout_sr": 0.0925,
+      "elapsed_s": 921.5
+    },
+    {
+      "timesteps": 755712,
+      "heldout_sr": 0.1525,
+      "elapsed_s": 1375.8
+    },
+    {
+      "timesteps": 1007616,
+      "heldout_sr": 0.2125,
+      "elapsed_s": 2042.4
+    },
+    {
+      "timesteps": 1259520,
+      "heldout_sr": 0.2875,
+      "elapsed_s": 2868.9
+    },
+    {
+      "timesteps": 1511424,
+      "heldout_sr": 0.3275,
+      "elapsed_s": 3766.1
+    }
+  ]
+}

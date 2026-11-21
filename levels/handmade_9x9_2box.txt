@@ -1,0 +1,135 @@
+; Hand-designed held-out test set (9x9, two boxes).  Never used for training or fitness.
+; Legend: # wall, @ agent, n box, . goal, N box on goal, + agent on goal.
+; Each level targets one multi-box skill; the name says which.
+
+; 01 two-lanes: two independent straight pushes
+#########
+#       #
+#@n   . #
+#       #
+# n   . #
+#       #
+#       #
+#       #
+#########
+
+; 02 deepest-goal-first: a dead-end shaft holds both goals; fill the bottom one first
+#########
+#       #
+# n   n #
+#   @   #
+#### ####
+#### ####
+####.####
+####.####
+#########
+
+; 03 two-rooms: clear the doorway box, then route the second box round
+#########
+#@  #   #
+#   n . #
+#   #   #
+## ###n##
+#       #
+#  .    #
+#       #
+#########
+
+; 04 stacked-goals: line both boxes up on one column and push them up in order
+#########
+#   .   #
+#   .   #
+#       #
+# n   n #
+#       #
+#   @   #
+#       #
+#########
+
+; 05 along-the-wall: boxes on the top wall only slide sideways; far goal first
+#########
+#@n n ..#
+#       #
+#       #
+#       #
+#       #
+#       #
+#       #
+#########
+
+; 06 pillar-detour: push the boxes around a central pillar
+#########
+#       #
+#  n    #
+#  ###  #
+# @###. #
+#  ###  #
+#    n  #
+#     . #
+#########
+
+; 07 clear-the-blocker: the near box blocks the corridor; drop it into the lower room first
+#########
+##@ #####
+#  n n .#
+###  ####
+#   .   #
+#       #
+#########
+#########
+#########
+
+; 08 long-haul: both boxes start far from their goals
+#########
+#       #
+# n     #
+#       #
+#   @   #
+#       #
+# n    .#
+#      .#
+#########
+
+; 09 narrow-gate: both boxes must pass one 1-wide gap; the upper goal first
+#########
+#   #   #
+# n # . #
+#   #   #
+#@n   . #
+#   #   #
+#   #   #
+#   #   #
+#########
+
+; 10 cornered-pair: goals sit in the two top corners of a small chamber
+#########
+#########
+##.   .##
+##     ##
+##  n  ##
+##  n  ##
+##  @  ##
+#########
+#########
+
+; 11 offset-goals: goals on different rows and columns; plan push directions
+#########
+#       #
+#  .    #
+#       #
+#  n n  #
+#    @  #
+#      .#
+#       #
+#########
+
+; 12 l-shaped-corridor: deliver both boxes through an L-bend
+#########
+#@      #
+# n n   #
+######  #
+######  #
+######  #
+###..   #
+#########
+#########

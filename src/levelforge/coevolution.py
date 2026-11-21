@@ -150,7 +150,8 @@ def run_coevolution(
         # Breed next generation (or sample random levels for the ablation).
         if generator == "ga":
             children, attempts, solvable = next_generation(
-                population, fitnesses, rng, elite_k=cfg["elite_k"], max_nodes=cfg["max_nodes"])
+                population, fitnesses, rng, elite_k=cfg["elite_k"], max_nodes=cfg["max_nodes"],
+                max_steps=cfg["max_steps"])
             yield_ = solvable / attempts if attempts else 1.0
             gen_stats["solvability_yield"] = float(yield_)
             gen_stats["offspring_attempts"] = attempts

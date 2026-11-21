@@ -134,3 +134,61 @@ vs generation; Welch's t-test / Mann–Whitney U on final SR and FDE.
 | §6 Methodology | §§3–6 above |
 | §7 Results | `runs/*/metrics.jsonl`, `evaluation.py` |
 | §8 Conclusion | constraints of CPU training; UED connection; future work (regret approximations, diffusion generators) |
+
+---
+
+# Part II — UED experiment layer (PPO agent)
+
+The sections above describe the original DQN pipeline. The research experiment now runs on the
+layer below; see the README for the experimental design and commands.
+
+## 10. Rule fixes that affect both pipelines
+
+* `crush_cells` now computes **dead squares** by reverse-pull reachability from the goals (a box at
+  `c` can come from `p = c − d` iff `p` and `p − d` are free). The earlier local rule marked every
+  1-wide corridor cell as a deadlock. Computed once per episode (`SokobanEnv.reset`).
+* `solver.py` tracks box kinds; `verify_level` proves a level winnable within `max_steps`, computes
+  the plan's energy cost and raises the budget to it if needed. Used by the generator
+  (`random_solvable_level`, budget = plan cost + 6) and by the GA (children must verify).
+* `repair_level(n_boxes=...)` keeps the parents' box count (previously forced ≥ 3 boxes).
+* `scramble_level` honours `heavy_prob` / `fragile_prob` exactly (a hidden +0.25 was removed).
+
+## 11. Agent (`gym_env.py`, `ppo_agent.py`)
+
+* Observation `(7, H, W)`: 6 one-hot channels + a constant energy plane.
+* Training reward: standard Boxoban reward (−0.1/step, ±1 box on/off goal, +10 solve, −1 lost
+  episode) + potential-based distance shaping (weight 0.1). Timeouts are *truncations* (bootstrapped),
+  deadlocks/fragile breaks/energy exhaustion are *terminations*.
+* PPO: 16 in-process envs × 128 steps, batch 256, 4 epochs, lr 3e-4, γ 0.99, λ 0.95, clip 0.2,
+  entropy 0.01; CNN 32-64-64 (3×3, same padding) → 256 → separate 128-unit policy/value heads.
+* `rollout_batch` runs many episodes in lock-step so one forward pass serves the whole batch — this
+  is what makes scoring a GA population every generation affordable.
+
+## 12. Fitness (`fitness.py`)
+
+`regret = 1 − mean_t[solved_t · min(1, optimal_moves / steps_t)]` over 4 stochastic rollouts, only on
+A*-verified levels (unverifiable ⇒ fitness 0). Alternatives: `failure` (1 − p), `learnability`
+(p(1 − p)). Optional novelty bonus: mean normalised Hamming distance to the k = 5 nearest levels in
+population ∪ archive, weight 0.1.
+
+## 13. Orchestration (`ued.py`)
+
+```
+pretrain(seed)                      # shared by all conditions of the seed (cached)
+for cycle in 1..C:
+    new = choose 16 levels          # ga | random_search | random | fixed
+          ga: G generations of score → select → crossover/mutate → A* verify
+              (population persists across cycles); top-16 unique by fitness
+    train PPO for T steps on 0.4·base + 0.4·new + 0.2·archive
+    archive += new
+    evaluate: held-out, +1 box, hand-designed, archive (stochastic & greedy)
+```
+
+Budgets are matched across conditions for PPO steps and curriculum size; the GA and
+random-search conditions additionally match the number of candidate levels scored.
+
+## 14. Analysis (`analysis.py`)
+
+Mean ± std over seeds, exact permutation test and bootstrap 95 % CI (GA vs each baseline),
+cross-evaluation of every final model on other seeds' GA archives, and three figures
+(success curves, curriculum regret, frozen-agent discovery curve).

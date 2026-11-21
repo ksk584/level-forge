@@ -21,42 +21,35 @@ from .grid import Level
 
 
 def crush_cells(level: Level) -> Set[Tuple[int, int]]:
-    """Cells where a non-goal box can never be pushed to safety again."""
+    """Dead squares: free cells from which a lone box can never reach any goal.
+
+    Standard "simple deadlock" detection.  Starting with a box on every goal we
+    repeatedly *pull* it backwards: a box at ``c`` can have been pushed there
+    from ``p = c - d`` iff ``p`` and the agent's cell ``p - d`` are both free.
+    Every cell reached this way is live; all other free cells are dead.
+
+    This subsumes corner deadlocks and wall-line deadlocks, and -- unlike a
+    local "two walls opposite each other" rule -- never flags 1-wide corridors
+    that a box can legitimately travel along.  Depends only on walls + goals,
+    so callers should compute it once per level and reuse it.
+    """
     h, w = level.height, level.width
     walls = level.walls
-    goals = level.goal_set()
-    crush: Set[Tuple[int, int]] = set()
 
-    def is_wall(x, y):
-        return x < 0 or y < 0 or x >= w or y >= h or bool(walls[y, x])
+    def free(x, y):
+        return 0 <= x < w and 0 <= y < h and not walls[y, x]
 
-    def has_goal_along_line(x, y, dx, dy):
-        """Scan one direction until a wall; True if a goal lies in the unbroken run."""
-        xx, yy = x + dx, y + dy
-        while level.in_bounds(xx, yy) and not walls[yy, xx]:
-            if (xx, yy) in goals:
-                return True
-            xx += dx
-            yy += dy
-        return False
-
-    for y in range(h):
-        for x in range(w):
-            walls_row = walls[y, x]
-            if walls_row or (x, y) in goals:
-                continue
-            left, right = is_wall(x - 1, y), is_wall(x + 1, y)
-            up, down = is_wall(x, y - 1), is_wall(x, y + 1)
-            # Corner deadlock: two perpendicular sides blocked.
-            if (left or right) and (up or down):
-                crush.add((x, y))
-                continue
-            # Wall-line deadlock: run of walls (or unrescuable segment) with no goal.
-            if left and right and not (has_goal_along_line(x, y, -1, 0) or has_goal_along_line(x, y, 1, 0)):
-                crush.add((x, y))
-            elif up and down and not (has_goal_along_line(x, y, 0, -1) or has_goal_along_line(x, y, 0, 1)):
-                crush.add((x, y))
-    return crush
+    live: Set[Tuple[int, int]] = set(g for g in level.goals if free(*g))
+    stack = list(live)
+    while stack:
+        cx, cy = stack.pop()
+        for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            px, py = cx - dx, cy - dy          # box's previous cell
+            ax, ay = px - dx, py - dy          # where the agent stood to push
+            if (px, py) not in live and free(px, py) and free(ax, ay):
+                live.add((px, py))
+                stack.append((px, py))
+    return {(x, y) for y in range(h) for x in range(w) if not walls[y, x] and (x, y) not in live}
 
 
 def box_is_deadlocked(level: Level, pos: Tuple[int, int], crush: Set[Tuple[int, int]] | None = None) -> bool:

@@ -233,6 +233,78 @@ def cmd_demo(args):
     run_coevolution(cfg, out_dir=args.out, generator="ga", name="demo")
 
 
+# ---------------------------------------------------------------------- #
+# UED experiment (PPO agent): pretrain / run / attack / analyze / bench
+# ---------------------------------------------------------------------- #
+def _ued_cfg(args) -> dict:
+    from .ued import UED_DEFAULTS
+
+    cfg = dict(UED_DEFAULTS)
+    if getattr(args, "config", None):
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg.update(json.load(f))
+    for key in ("cycles", "steps_per_cycle", "pretrain_steps", "population", "ga_generations",
+                "levels_per_cycle", "fitness", "novelty_weight", "device", "threads"):
+        v = getattr(args, key, None)
+        if v is not None:
+            cfg[key] = v
+    return cfg
+
+
+def cmd_ued_pretrain(args):
+    from .ued import pretrain
+
+    cfg = _ued_cfg(args)
+    for seed in args.seeds:
+        pretrain(cfg, seed, Path(args.exp))
+
+
+def cmd_ued_run(args):
+    from .ued import CONDITIONS, run_condition
+
+    cfg = _ued_cfg(args)
+    conditions = CONDITIONS if args.condition == "all" else [args.condition]
+    for seed in args.seeds:
+        for cond in conditions:
+            run_condition(cfg, cond, seed, Path(args.exp))
+
+
+def cmd_ued_attack(args):
+    from .attack import run_attack
+
+    cfg = _ued_cfg(args)
+    model = args.model or str(Path(args.exp) / f"pretrain_seed{args.seeds[0]}" / "model.zip")
+    run_attack(model, cfg, Path(args.exp) / "attack", budget=args.budget, seeds=args.seeds)
+
+
+def cmd_ued_analyze(args):
+    from .analysis import analyze
+
+    analyze(args.exp, do_cross_eval=not args.no_cross_eval)
+
+
+def cmd_agent_bench(args):
+    from .agent_bench import run_agent_bench
+
+    run_agent_bench(_ued_cfg(args), Path(args.exp) / "agent_bench", total_steps=args.steps, seed=args.seeds[0])
+
+
+def _add_ued_common(p, seeds_default=(0, 1, 2)):
+    p.add_argument("--exp", default="runs/ued", help="experiment directory")
+    p.add_argument("--config", default=None, help="JSON config overriding UED defaults (e.g. configs/ued_7x7.json)")
+    p.add_argument("--seeds", type=int, nargs="+", default=list(seeds_default))
+    p.add_argument("--device", default=None, help="auto | cpu | cuda")
+    p.add_argument("--threads", type=int, default=None, help="torch CPU threads")
+    p.add_argument("--cycles", type=int, default=None)
+    p.add_argument("--steps-per-cycle", dest="steps_per_cycle", type=int, default=None)
+    p.add_argument("--pretrain-steps", dest="pretrain_steps", type=int, default=None)
+    p.add_argument("--population", type=int, default=None)
+    p.add_argument("--ga-generations", dest="ga_generations", type=int, default=None)
+    p.add_argument("--levels-per-cycle", dest="levels_per_cycle", type=int, default=None)
+    p.add_argument("--fitness", choices=["regret", "failure", "learnability"], default=None)
+    p.add_argument("--novelty-weight", dest="novelty_weight", type=float, default=None)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="levelforge", description="LevelForge: GA + DQN adversarial level generation for Sokoban")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -338,6 +410,31 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--seed", type=int, default=42)
     d.add_argument("--out", default="runs")
     d.set_defaults(func=cmd_demo)
+
+    u = sub.add_parser("ued-pretrain", help="[UED] pretrain the shared PPO checkpoint for each seed")
+    _add_ued_common(u)
+    u.set_defaults(func=cmd_ued_pretrain)
+
+    u = sub.add_parser("ued-run", help="[UED] run one condition (or all) for the given seeds")
+    _add_ued_common(u)
+    u.add_argument("--condition", choices=["ga", "random_search", "random", "fixed", "all"], default="all")
+    u.set_defaults(func=cmd_ued_run)
+
+    u = sub.add_parser("ued-attack", help="[UED] frozen-agent search: GA vs random search at equal budget")
+    _add_ued_common(u)
+    u.add_argument("--model", default=None, help="PPO model.zip (default: the seed's pretrained checkpoint)")
+    u.add_argument("--budget", type=int, default=1024, help="candidate levels evaluated per method per seed")
+    u.set_defaults(func=cmd_ued_attack)
+
+    u = sub.add_parser("ued-analyze", help="[UED] tables, significance tests and figures for an experiment")
+    _add_ued_common(u)
+    u.add_argument("--no-cross-eval", action="store_true", help="skip evaluating models on other seeds' GA levels")
+    u.set_defaults(func=cmd_ued_analyze)
+
+    u = sub.add_parser("agent-bench", help="[UED] DQN (from scratch) vs PPO at equal environment steps")
+    _add_ued_common(u, seeds_default=(0,))
+    u.add_argument("--steps", type=int, default=400_000)
+    u.set_defaults(func=cmd_agent_bench)
     return parser
 
 

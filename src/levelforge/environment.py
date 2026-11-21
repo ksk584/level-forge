@@ -49,6 +49,8 @@ class SokobanEnv:
         self.failure: Optional[str] = None
         self.box_total = len(self.level.boxes)
         self.placed_reward_given = self.level.boxes_on_goals()
+        # Dead squares depend only on walls + goals: compute once per episode.
+        self._crush = crush_cells(self.level)
         return self._obs(), self._info()
 
     # ------------------------------------------------------------------ #
@@ -85,7 +87,7 @@ class SokobanEnv:
         dx, dy = _DELTAS[int(action)]
         ax, ay = self.level.agent
         nx, ny = ax + dx, ay + dy
-        crush = crush_cells(self.level)
+        crush = self._crush
 
         if self.level.is_wall(nx, ny):
             return self._after(reward, failure=None)

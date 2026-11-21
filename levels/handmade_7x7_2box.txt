@@ -1,0 +1,111 @@
+; Hand-designed held-out test set (7x7, two boxes).  Never used for training or fitness.
+; Legend: # wall, @ agent, n box, . goal, N box on goal, + agent on goal.
+; Each level targets one multi-box skill; the name says which.
+
+; 01 two-lanes: two independent straight pushes
+#######
+#     #
+#@n  .#
+#     #
+# n  .#
+#     #
+#######
+
+; 02 deepest-goal-first: a dead-end shaft holds both goals; fill the bottom one first
+#######
+#     #
+# n n #
+#  @  #
+###.###
+###.###
+#######
+
+; 03 clear-the-blocker: the near box blocks the corridor; drop it into the lower room first
+#######
+##@####
+# n n.#
+## ####
+#     #
+#  .  #
+#######
+
+; 04 stacked-goals: line both boxes up on one column and push them up in order
+#######
+#  .  #
+#  .  #
+# n n #
+#     #
+#  @  #
+#######
+
+; 05 along-the-wall: each box can only slide along the wall it touches
+#######
+# n  .#
+#     #
+#    n#
+#     #
+#@   .#
+#######
+
+; 06 pillar-detour: each box goes round the pillar on its own side
+#######
+#     #
+# n   #
+# ### #
+#@  n #
+#.   .#
+#######
+
+; 07 narrow-gate: both boxes pass one gap; the upper goal must be filled first
+#######
+#  # .#
+# n#  #
+#@n   #
+#  # .#
+#  #  #
+#######
+
+; 08 long-haul: boxes travel to opposite corners
+#######
+#@   .#
+# n   #
+#     #
+#   n #
+#.    #
+#######
+
+; 09 cornered-pair: goals sit in the two top corners
+#######
+#.   .#
+#     #
+#  n  #
+#  n  #
+#  @  #
+#######
+
+; 10 offset-goals: goals on different rows and columns; plan push directions
+#######
+#     #
+# .   #
+#  n  #
+#   n #
+#  @ .#
+#######
+
+; 11 l-shaped-corridor: deliver both boxes through an L-bend
+#######
+#@    #
+# n n #
+####  #
+####  #
+#..   #
+#######
+
+; 12 go-around: walk round the near box to place the far one first
+#######
+#     #
+#@n n.#
+#     #
+#   . #
+#     #
+#######

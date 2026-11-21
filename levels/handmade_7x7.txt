@@ -1,0 +1,147 @@
+; Hand-designed held-out test set (7x7).  Never used for training or fitness.
+; Legend: # wall, @ agent, n box, . goal, N box on goal, + agent on goal.
+; Each level targets one skill; the name says which.
+
+; 01 straight-push: warm-up, push along a line
+#######
+#     #
+#@n  .#
+#     #
+#     #
+#     #
+#######
+
+; 02 walk-around: agent starts between box and goal, must go round
+#######
+#     #
+#.@n  #
+#     #
+#     #
+#     #
+#######
+
+; 03 turn-the-corner: push right, re-position, push down
+#######
+#     #
+#@n   #
+#     #
+#   . #
+#     #
+#######
+
+; 04 corridor: box must travel through a 1-wide tunnel
+#######
+#@    #
+# n####
+#    .#
+#######
+#######
+#######
+
+; 05 vertical-shaft: push a box down a shaft
+#######
+#  @  #
+#  n  #
+### ###
+### ###
+###.###
+#######
+
+; 06 overshoot-trap: pushing too far wedges the box in the corner
+#######
+#     #
+#     #
+#@ n. #
+#######
+#######
+#######
+
+; 07 detour-around-wall: wall splits the room, agent must go round
+#######
+#.    #
+# ### #
+# n   #
+# #@# #
+#     #
+#######
+
+; 08 doorway: box goes through a single-cell gap
+#######
+#   # #
+#@n   #
+#   # #
+### # #
+#  .  #
+#######
+
+; 09 approach-from-behind: agent starts on the goal, must circle behind the box
+#######
+#  +  #
+#     #
+#  n  #
+#     #
+#     #
+#######
+
+; 10 two-boxes-lineup: two boxes in a row, order matters
+#######
+#     #
+#@nn..#
+#     #
+#     #
+#     #
+#######
+
+; 11 two-boxes-separate-rooms
+#######
+#.  # #
+# n   #
+#   #@#
+# # n #
+#   #.#
+#######
+
+; 12 blocked-doorway: a box sits in the only doorway between rooms
+#######
+# .   #
+#     #
+##n####
+#     #
+#@ n .#
+#######
+
+; 13 goal-in-corner: approach direction matters
+#######
+#.    #
+#     #
+#  n  #
+#     #
+#    @#
+#######
+
+; 14 zig-zag: right, down through a gap, then back left
+#######
+#@    #
+# n   #
+#### ##
+#     #
+#.    #
+#######
+
+; 15 two-boxes-cross
+#######
+#  .  #
+#  n  #
+#.n @ #
+#     #
+#     #
+#######
+
+; 16 two-boxes-parallel: two boxes, two adjacent goals
+#######
+#     #
+# n.  #
+# n.  #
+#@    #
+#     #
+#######

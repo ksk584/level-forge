@@ -79,10 +79,10 @@ def scramble_level(
 
     # Assign payload kinds (at most one heavy and one fragile for balance).
     kinds = [BOX_NORMAL] * n_boxes
-    if rng.random() < heavy_prob + 0.25:
+    if rng.random() < heavy_prob:
         heavy_idx = int(rng.integers(0, n_boxes))
         kinds[heavy_idx] = BOX_HEAVY
-    if rng.random() < fragile_prob + 0.25:
+    if rng.random() < fragile_prob:
         fragile_candidates = [i for i, k in enumerate(kinds) if k == BOX_NORMAL]
         if fragile_candidates:
             fragile_idx = int(rng.choice(fragile_candidates))
@@ -278,12 +278,21 @@ def random_solvable_level(
     fragile_prob: float = 0.20,
     max_tries: int = 60,
     max_nodes: int = 30000,
+    max_steps: int = 300,
+    energy_slack: int = 6,
 ) -> Level:
     """Generate a solvable random level via the reverse-scramble construction.
 
     (Rejection sampling of random box/goal placements is almost never solvable
     for Sokoban, so generation always starts from the solved state.)
+
+    Every level is then verified with A*: it must be winnable within
+    ``max_steps``, and its energy budget is set to the optimal plan's push cost
+    plus ``energy_slack``.  (The scramble's own energy tally counts every pull,
+    including ones that cancel out, which made budgets ~40x too loose.)
     """
+    from .solver import verify_level
+
     last_err: Optional[Exception] = None
     for _ in range(max_tries):
         try:
@@ -293,15 +302,21 @@ def random_solvable_level(
             continue
         if level.validate():
             continue
+        info = verify_level(level, max_steps=max_steps, max_nodes=max_nodes)
+        if info is None:
+            continue
+        level.energy = info["energy_cost"] + energy_slack
         return level
     raise RuntimeError(f"could not generate a solvable level in {max_tries} tries ({last_err})")
 
 
-def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20) -> Optional[Level]:
+def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20,
+                 n_boxes: Optional[int] = None, allow_kinds: bool = True) -> Optional[Level]:
     """Fix structural problems produced by crossover/mutation.
 
     Returns a Level with borders enforced, no overlaps, and matching
-    box/goal counts, or None if repair fails.
+    box/goal counts, or None if repair fails.  ``n_boxes`` fixes the box count
+    (default: keep the incoming count, but at least 1).
     """
     h, w = level.height, level.width
     walls = level.walls.copy()
@@ -332,11 +347,15 @@ def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20) ->
     for x, y, kind in level.boxes:
         if (x, y) in free_set and all(b[:2] != (x, y) for b in boxes):
             boxes.append((x, y, kind))
-    while len(boxes) < 3:
+    target = n_boxes if n_boxes is not None else max(1, len(level.boxes))
+    if len(boxes) > target:
+        order = rng.permutation(len(boxes))[:target]
+        boxes = [boxes[i] for i in sorted(order)]
+    while len(boxes) < target:
         c = random_free(used | set(goals) | {b[:2] for b in boxes})
         if c == (-1, -1):
             return None
-        kind = int(rng.choice(BOX_KINDS))
+        kind = int(rng.choice(BOX_KINDS)) if allow_kinds else BOX_NORMAL
         boxes.append((c[0], c[1], kind))
     # Match box/goal counts by trimming/extending goals.
     while len(goals) > len(boxes):

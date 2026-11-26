@@ -27,8 +27,29 @@ _LABEL = {BOX_HEAVY: "H", BOX_FRAGILE: "F"}
 _DIR = {"Up": 0, "w": 0, "Down": 1, "s": 1, "Left": 2, "a": 2, "Right": 3, "d": 3}
 
 
+class _PPOActor:
+    """Drives the viewer with a PPO model.zip (sampled actions, as in evaluation, unless deterministic)."""
+
+    def __init__(self, path: str, level: Level, deterministic: bool, seed: int):
+        import torch
+
+        from .ppo_agent import PPOAgent
+
+        torch.manual_seed(seed)
+        self.agent = PPOAgent.load(path, [level], device="cpu", n_envs=1, batch_size=128)  # inference only
+        self.deterministic = deterministic
+        self.epsilon = 0.0
+        self.level = None  # set by the viewer before each step
+
+    def select_action(self, vec, greedy: bool = True):
+        from .gym_env import encode_obs
+
+        return int(self.agent.act(encode_obs(self.level)[None], self.deterministic)[0])
+
+
 def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, seed: int,
-         solver_moves: list[int] | None = None):
+         solver_moves: list[int] | None = None, ppo_model: str | None = None,
+         deterministic: bool = False, max_steps: int | None = None):
     try:
         import tkinter as tk
     except ImportError as e:  # pragma: no cover
@@ -47,6 +68,9 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
                 return self._moves.pop(0) if self._moves else 0
         agent = SolverAgent(solver_moves)
         mode = "A* solver replay"
+    elif ppo_model:
+        agent = _PPOActor(ppo_model, level, deterministic, seed)
+        mode = f"PPO agent: {ppo_model}"
     else:
         agent = None
         if checkpoint:
@@ -61,7 +85,7 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
             mode = "DQN replay"
         else:
             mode = "You are playing"
-    max_steps = 500 if agent else 10**9
+    max_steps = max_steps or (500 if agent else 10**9)
     state = {
         "env": SokobanEnv(level, max_steps=max_steps),
         "delay": max(30, int(delay_ms)),
@@ -131,6 +155,8 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         if state["paused"]:
             state["after_id"] = root.after(state["delay"], agent_tick)
             return
+        if isinstance(agent, _PPOActor):
+            agent.level = env.level
         vec = flatten_obs(state["obs"], env.level.energy)
         action = agent.select_action(vec, greedy=(explore <= 0.0))
         state["obs"], _r, _done, _info = env.step(action)
@@ -188,3 +214,9 @@ def run(level: Level):
 
 def run_agent(level: Level, checkpoint: str, delay_ms: int = 350, explore: float = 0.0, seed: int = 0):
     _run(level, checkpoint=checkpoint, delay_ms=delay_ms, explore=explore, seed=seed)
+
+
+def run_ppo(level: Level, model: str, delay_ms: int = 250, deterministic: bool = False, seed: int = 0,
+            max_steps: int = 120):
+    _run(level, checkpoint=None, delay_ms=delay_ms, explore=0.0, seed=seed, ppo_model=model,
+         deterministic=deterministic, max_steps=max_steps)

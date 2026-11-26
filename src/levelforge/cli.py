@@ -173,8 +173,13 @@ def cmd_watch(args):
         print(f"[levelforge] solved in {len(moves)} moves ({nodes} explored nodes, {dt:.2f}s)")
         run_solver(level, moves, delay_ms=args.delay)
         return
+    if args.ppo:
+        from .tk_viewer import run_ppo
+        run_ppo(level, args.ppo, delay_ms=args.delay, deterministic=args.deterministic, seed=args.seed,
+                max_steps=args.max_steps or 120)
+        return
     if not args.checkpoint:
-        print("[levelforge] --checkpoint is required unless --solver is set")
+        print("[levelforge] --checkpoint (DQN) or --ppo (PPO model.zip) is required unless --solver is set")
         return
     if args.tk:
         from .tk_viewer import run_agent
@@ -182,7 +187,7 @@ def cmd_watch(args):
         return
     if args.text:
         from .replay import run_text
-        run_text(level, args.checkpoint, delay_ms=args.delay, max_steps=args.max_steps,
+        run_text(level, args.checkpoint, delay_ms=args.delay, max_steps=args.max_steps or 500,
                  explore=args.explore, seed=args.seed)
         return
     from .qt_viewer import run_agent
@@ -365,12 +370,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tk", action="store_true", help="use the Tkinter viewer (no Qt required, recommended)")
     p.set_defaults(func=cmd_play)
 
-    w = sub.add_parser("watch", help="Watch the trained DQN agent replay a level (PyQt5)")
+    w = sub.add_parser("watch", help="Watch an agent (PPO --ppo, DQN --checkpoint) or the A* solver play a level")
     w.add_argument("--level", required=True)
     w.add_argument("--checkpoint", default=None, help="path to a checkpoint .pt written by evolve/train-baseline (not needed with --solver)")
     w.add_argument("--delay", type=int, default=350, help="milliseconds between agent moves (30-5000); +/- keys adjust live")
     w.add_argument("--text", action="store_true", help="headless mode: print board frames to the terminal instead of opening a window")
-    w.add_argument("--max-steps", type=int, default=500, help="step cap for --text mode")
+    w.add_argument("--max-steps", type=int, default=None, help="step cap (default: 120 with --ppo, as in evaluation; 500 for --text)")
+    w.add_argument("--ppo", default=None, help="PPO model.zip from the UED experiments (Tk viewer)")
+    w.add_argument("--deterministic", action="store_true", help="with --ppo: greedy actions instead of sampling (evaluation samples)")
     w.add_argument("--explore", type=float, default=0.0, help="exploration epsilon for replay (0 = pure greedy). Try 0.2-0.3 to see the agent move when undertrained")
     w.add_argument("--seed", type=int, default=0, help="RNG seed for --explore sampling")
     w.add_argument("--tk", action="store_true", help="use the Tkinter viewer (no Qt required, recommended)")

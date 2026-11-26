@@ -1,0 +1,8 @@
+{
+  "levels_scored": 583,
+  "pretrained_mean": 0.03494854202401372,
+  "ga_trained_mean": 0.3379073756432247,
+  "random_trained_mean": 0.319253859348199,
+  "learned_candidates": 94,
+  "unsolved_by_all": 181
+}

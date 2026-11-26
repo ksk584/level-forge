@@ -1,0 +1,43 @@
+{
+  "variant": "9x9_2box",
+  "cfg": {
+    "size": 9,
+    "n_boxes": 2,
+    "max_steps": 200
+  },
+  "gen_s_per_level": 0.014,
+  "optimal_moves_mean": 12.57,
+  "optimal_moves_p90": 19.0,
+  "curve": [
+    {
+      "timesteps": 251904,
+      "heldout_sr": 0.025,
+      "elapsed_s": 720.1
+    },
+    {
+      "timesteps": 503808,
+      "heldout_sr": 0.0325,
+      "elapsed_s": 1435.0
+    },
+    {
+      "timesteps": 755712,
+      "heldout_sr": 0.0775,
+      "elapsed_s": 2591.7
+    },
+    {
+      "timesteps": 1007616,
+      "heldout_sr": 0.085,
+      "elapsed_s": 3883.0
+    },
+    {
+      "timesteps": 1259520,
+      "heldout_sr": 0.16,
+      "elapsed_s": 4831.0
+    },
+    {
+      "timesteps": 1511424,
+      "heldout_sr": 0.1725,
+      "elapsed_s": 5744.1
+    }
+  ]
+}

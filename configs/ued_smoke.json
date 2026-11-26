@@ -1,0 +1,7 @@
+{
+  "_comment": "Tiny end-to-end check of the UED pipeline (~2-3 min on CPU). Not for results.",
+  "base_pool": 60, "pretrain_steps": 4096, "cycles": 2, "steps_per_cycle": 2048,
+  "levels_per_cycle": 4, "population": 8, "ga_generations": 2, "eval_trials": 2,
+  "heldout_size": 20, "threads": 2, "device": "cpu",
+  "ppo": {"n_envs": 4, "n_steps": 256, "batch_size": 256}
+}

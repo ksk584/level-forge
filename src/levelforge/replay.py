@@ -27,7 +27,7 @@ def run_text(level: Level, checkpoint: str, delay_ms: int = 250, max_steps: int 
     obs, _ = env.reset()
     try:
         import random
-        random.seed(seed)
+        agent.rng = random.Random(seed)  # seeds --explore sampling
         while not env.done:
             if clear_screen:
                 os.system("cls" if os.name == "nt" else "clear")

@@ -1,8 +1,9 @@
 """Genetic algorithm: tournament selection, region-wise crossover, mutation.
 
 Levels double as genomes (a Level instance).  Child levels are always passed
-through ``repair_level`` and the solvability checker; offspring that fail the
-check are counted towards the solvability yield (SY) metric and discarded.
+through ``repair_level`` and then the A* solver (``solver.verify_level``), which
+models the player's movement, the step cap and the energy budget; offspring that
+fail are counted towards the solvability yield (SY) metric and discarded.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import numpy as np
 
 from .grid import BOX_KINDS, Level
 from .population import repair_level
-from .solvability import is_solvable
+from .solver import verify_level
 
 
 def tournament_select(population: List[Level], fitnesses: List[float], rng: np.random.Generator, k: int = 3) -> Level:
@@ -22,7 +23,7 @@ def tournament_select(population: List[Level], fitnesses: List[float], rng: np.r
     return population[int(best)]
 
 
-def crossover(a: Level, b: Level, rng: np.random.Generator) -> Optional[Level]:
+def crossover(a: Level, b: Level, rng: np.random.Generator, allow_kinds: bool = True) -> Optional[Level]:
     """Region-wise crossover: 2x2 block mixing of walls; goals/boxes inherited
     from a randomly chosen parent with per-item coin flips; then repaired."""
     h, w = a.walls.shape
@@ -53,7 +54,7 @@ def crossover(a: Level, b: Level, rng: np.random.Generator) -> Optional[Level]:
     agent = a.agent if rng.random() < 0.5 else b.agent
     energy = int(round(0.5 * a.energy + 0.5 * b.energy + rng.integers(-2, 3)))
     child = Level(child_walls, goals, boxes, agent, energy)
-    return repair_level(child, rng)
+    return repair_level(child, rng, n_boxes=len(a.boxes), allow_kinds=allow_kinds)
 
 
 def mutate(level: Level, rng: np.random.Generator,
@@ -92,7 +93,7 @@ def mutate(level: Level, rng: np.random.Generator,
         energy = int(np.clip(energy + rng.integers(-3, 4), 6, 60))
 
     child = Level(walls, goals, boxes, (ax, ay), energy)
-    return repair_level(child, rng)
+    return repair_level(child, rng, n_boxes=len(level.boxes), allow_kinds=p_kind > 0)
 
 
 def population_diversity(levels: List[Level]) -> float:
@@ -108,12 +109,13 @@ def population_diversity(levels: List[Level]) -> float:
     return (total / count) if count else 0.0
 
 
-def produce_offspring(a: Level, b: Level, rng: np.random.Generator, mutate_prob: float = 0.8) -> Optional[Level]:
-    child = crossover(a, b, rng)
+def produce_offspring(a: Level, b: Level, rng: np.random.Generator, mutate_prob: float = 0.8,
+                      allow_kinds: bool = True) -> Optional[Level]:
+    child = crossover(a, b, rng, allow_kinds=allow_kinds)
     if child is None:
         return None
     if rng.random() < mutate_prob:
-        child = mutate(child, rng)
+        child = mutate(child, rng, p_kind=0.08 if allow_kinds else 0.0)
     return child
 
 
@@ -124,10 +126,15 @@ def next_generation(
     elite_k: int = 2,
     max_nodes: int = 30000,
     max_attempts: int = 200,
+    max_steps: int = 300,
+    allow_kinds: bool = True,
 ) -> Tuple[List[Level], int, int]:
     """Breed the next generation.
 
     Returns (children, attempts, solvable_children) -- SY = solvable_children / attempts.
+    A child is kept only if A* proves it winnable within ``max_steps``; its
+    energy is raised to the plan's cost if needed (``verify_level``), so the
+    GA can never "win" with impossible levels.
     """
     n = len(population)
     order = np.argsort(fitnesses)[::-1]
@@ -140,10 +147,10 @@ def next_generation(
         attempts += 1
         p1 = tournament_select(population, fitnesses, rng, k=3)
         p2 = tournament_select(population, fitnesses, rng, k=3)
-        child = produce_offspring(p1, p2, rng)
+        child = produce_offspring(p1, p2, rng, allow_kinds=allow_kinds)
         if child is None:
             continue
-        if not is_solvable(child, max_nodes=max_nodes):
+        if verify_level(child, max_steps=max_steps, max_nodes=max_nodes) is None:
             continue
         solvable += 1
         children.append(child)

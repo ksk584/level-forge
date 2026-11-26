@@ -1,8 +1,9 @@
 """Genetic algorithm: tournament selection, region-wise crossover, mutation.
 
 Levels double as genomes (a Level instance).  Child levels are always passed
-through ``repair_level`` and the solvability checker; offspring that fail the
-check are counted towards the solvability yield (SY) metric and discarded.
+through ``repair_level`` and then the A* solver (``solver.verify_level``), which
+models the player's movement, the step cap and the energy budget; offspring that
+fail are counted towards the solvability yield (SY) metric and discarded.
 """
 
 from __future__ import annotations

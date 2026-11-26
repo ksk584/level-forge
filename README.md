@@ -114,8 +114,13 @@ analysis/results.md, finals.json, success_curves.png, curriculum_regret.png, att
 greedy), the regret and pre/post-training success of the new curriculum levels, per-generation GA
 best/mean fitness, diversity, solvability yield and the fraction of candidates that break the agent.
 
+Play a fresh, random solvable puzzle with `python -m levelforge play`. Use the arrow keys or
+WASD to move; select **Switch to agent** to let the A* solver finish the current position, or
+**New random puzzle** to generate another level. Press R to restart and Esc to quit. Set difficulty
+with `--size` and `--boxes`, or start from an existing JSON level with `--level <file.json>`.
+
 Inspect any level: `python -m levelforge render --level <file.json> --out x.png`,
-`play --level ... --tk`, `watch --level ... --solver --tk`, `solve --level ...`.
+`python -m levelforge watch --level <file.json> --solver --tk`, `python -m levelforge solve --level <file.json>`.
 
 ---
 
@@ -137,7 +142,28 @@ Inspect any level: `python -m levelforge render --level <file.json> --out x.png`
   optimal plan's cost. Previously budgets were ~40× too loose and GA mutations could make levels
   unwinnable by starving energy.
 * **Stochastic evaluation for fitness.** A greedy policy in a deterministic environment replays the
-  same episode every trial, so multi-trial fitness was a single 0/1 sample.
+  same episode every trial, so multi-trial fitness was a single 0/1 sample. The PPO pipeline scores
+  levels with 4 sampled rollouts and a continuous, step-efficiency-weighted regret. The legacy
+  `evolve` pipeline now scores with seeded ε-exploration (`--eval-epsilon 0.1`, 4 trials); with
+  `--eval-epsilon 0` its fitness is pass/fail and must be reported as such.
+* **Solvability yield is measured the same way for every generator**: A*-verified candidates /
+  candidates produced (GA children or random scrambles). It used to be hard-coded to 1.0 for the
+  random generator.
+
+## Which agent produced which result
+
+Several agents exist in this repository. The report must name the one behind each result.
+
+| Result | Agent | How it was trained | Command / location |
+|---|---|---|---|
+| **All UED results**: main experiment, fitness and mixture ablations, 7×7 two-box and 9×9 scale-ups, frozen-agent attack, demo kit | **PPO** (Stable-Baselines3) with the `GridCNN` feature extractor | Reinforcement learning from scratch: 0.4–1.5 M pretraining steps on random levels, then each condition's curriculum (Boxoban reward) | `ued-*`; `runs/ued_*`, `docs/results/` |
+| DQN vs PPO comparison | DQN from scratch (CNN) vs PPO | RL, equal environment steps | `agent-bench`. Code provided; the DQN finding quoted above comes from pilot runs, and `agent-bench` was not part of the final experiment runs |
+| Legacy co-evolution (`evolve`, `train-baseline`, `demo`) | DQN, 2-hidden-layer MLP (64-64) by default | ε-greedy RL, optional BC warm start | legacy pipeline (below) |
+| BC warm start (`pretrain-bc`) | DQN Q-network (CNN by default) trained as a classifier | Single-pass behaviour cloning on the generator's own solution traces (no DAgger, no A* demonstrations) | `pretrain-bc` |
+
+Any showcase made with a **CNN trained by imitation of A\* demonstrations with DAgger** (e.g. 8×8
+showcase scripts or notebooks kept outside this repository) is an *imitation-learning* result. It
+is neither the DQN nor the PPO agent, and must be labelled as such wherever it appears.
 
 ## Related work and positioning
 
@@ -164,3 +190,11 @@ Inspect any level: `python -m levelforge render --level <file.json> --out x.png`
 The original from-scratch pipeline remains available: `train-baseline`, `evolve`
 (`--generator ga|random`), `pretrain-bc`, `evaluate`, `summarise`, `demo`, and
 `notebooks/LevelForge_Colab.ipynb`. See `docs/ARCHITECTURE.md` for its design notes.
+
+**Its results are not used in the report.** With CPU-scale training the DQN solves almost no
+levels, so every level gets the same fitness and GA selection has nothing to act on: "GA vs
+random levels" cannot show a difference there. `evolve` now detects this: each generation logs
+`fitness_std` and `fitness_distinct_values`, and prints a warning when all fitness values are
+equal. Fitness is scored with seeded ε-exploration (`--eval-epsilon`, default 0.1) so it is graded
+rather than pass/fail, the random-generator ablation measures its solvability yield instead of
+recording 1.0, and DQN exploration uses a seeded generator, so the same `--seed` reproduces a run.

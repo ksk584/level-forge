@@ -34,7 +34,11 @@ DEFAULT_CONFIG = {
     "population_size": 24,
     "generations": 10,
     "elite_k": 2,
-    "eval_trials": 2,
+    "eval_trials": 4,
+    # Exploration rate for the fitness evaluation.  0 = greedy: the environment is deterministic,
+    # so every trial replays the same episode and fitness is pass/fail (0 or 1).  > 0 = graded
+    # failure rate, still reproducible (seeded per generation).  Held-out evaluation stays greedy.
+    "eval_epsilon": 0.1,
     "topk_retrain": 5,
     "pretrain_episodes": 300,
     "retrain_episodes": 120,
@@ -109,12 +113,20 @@ def run_coevolution(
     t0 = time.time()
     for gen in range(cfg["generations"]):
         records, agg = evaluate_levels(agent, population, trials=cfg["eval_trials"],
-                                       max_steps=cfg["max_steps"], seed=seed + gen)
+                                       max_steps=cfg["max_steps"], seed=seed + gen,
+                                       epsilon=cfg["eval_epsilon"])
         failures = [0] * len(population)
         for r in records:
             if not r["solved"]:
                 failures[r["level_index"]] += 1
         fitnesses = [f / max(1, cfg["eval_trials"]) for f in failures]  # failure rate = fitness
+
+        # If every level gets the same fitness (e.g. an agent that solves nothing), selection is
+        # blind and the GA reduces to random search -- flag it instead of hiding it.
+        fitness_std = float(np.std(fitnesses))
+        if fitness_std == 0.0:
+            print(f"[levelforge] WARNING gen {gen}: all {len(fitnesses)} levels have fitness "
+                  f"{fitnesses[0]:.2f}; GA selection has no signal this generation (equivalent to random search).")
 
         diversity = population_diversity(population)
         best = _best_levels(population, fitnesses, cfg["topk_retrain"])
@@ -139,6 +151,9 @@ def run_coevolution(
             "agent_success_rate_on_pop": float(np.mean([1.0 - f for f in fitnesses])),
             "population_avg_failure_rate": float(np.mean(fitnesses)),
             "population_diversity": float(diversity),
+            "fitness_std": fitness_std,
+            "fitness_distinct_values": len(set(round(f, 6) for f in fitnesses)),
+            "eval_epsilon": cfg["eval_epsilon"],
             "solvability_yield": None,   # filled by breeding step below
             "failure_types_seen": failure_types,
             "heldout_success_rate": heldout_agg["success_rate"],
@@ -152,23 +167,24 @@ def run_coevolution(
             children, attempts, solvable = next_generation(
                 population, fitnesses, rng, elite_k=cfg["elite_k"], max_nodes=cfg["max_nodes"],
                 max_steps=cfg["max_steps"])
-            yield_ = solvable / attempts if attempts else 1.0
-            gen_stats["solvability_yield"] = float(yield_)
+            gen_stats["solvability_yield"] = solvable / attempts if attempts else None
             gen_stats["offspring_attempts"] = attempts
         else:  # "random" ablation: replace breeding with fresh random levels
-            children, attempts, solvable = [], 0, 0
+            # Measured like the GA's yield: verified candidates / candidates produced.
+            children, gen_counts = [], {}
             while len(children) < len(population):
                 try:
                     children.append(random_solvable_level(rng, size=cfg["size"], n_boxes=cfg["n_boxes"],
                                                            wall_frac=cfg["wall_frac"],
                                                            heavy_prob=cfg["heavy_prob"],
                                                            fragile_prob=cfg["fragile_prob"],
-                                                           max_nodes=cfg["max_nodes"]))
-                    attempts += 1
-                    solvable += 1
+                                                           max_nodes=cfg["max_nodes"],
+                                                           max_steps=cfg["max_steps"],
+                                                           stats=gen_counts))
                 except RuntimeError:
-                    attempts += 1
-            gen_stats["solvability_yield"] = 1.0
+                    pass
+            attempts = gen_counts.get("candidates", 0)
+            gen_stats["solvability_yield"] = gen_counts.get("verified", 0) / attempts if attempts else None
             gen_stats["offspring_attempts"] = attempts
 
         Ldir = out_dir / f"levels_gen_{gen}"
@@ -179,7 +195,7 @@ def run_coevolution(
         with open(metrics_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(gen_stats) + "\n")
         print(f"[levelforge] gen {gen:02d} | pop failure={gen_stats['population_avg_failure_rate']:.2f} "
-              f"| diversity={diversity:.3f} | SY={gen_stats['solvability_yield']:.2f} "
+              f"| diversity={diversity:.3f} | SY={gen_stats['solvability_yield'] or 0:.2f} "
               f"| heldout SR={heldout_agg['success_rate']:.2f}")
         population = children
 

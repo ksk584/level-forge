@@ -47,6 +47,7 @@ def cmd_evolve(args):
         "retrain_episodes": args.retrain_episodes,
         "pool_size": args.pool,
         "eval_trials": args.eval_trials,
+        "eval_epsilon": args.eval_epsilon,
         "topk_retrain": args.topk,
         "heldout_size": args.heldout_size,
         "max_steps": args.max_steps,
@@ -195,13 +196,26 @@ def cmd_watch(args):
 
 
 def cmd_play(args):
-    level = Level.load_json(args.level)
-    if args.tk:
-        from .tk_viewer import run
-        run(level)
-        return
-    from .qt_viewer import run
-    run(level)
+    from .population import generate_play_level
+    from .tk_viewer import run_game
+
+    rng = np.random.default_rng(args.seed)
+
+    if args.level:
+        level = Level.load_json(args.level)
+        size = args.size if args.size is not None else level.width
+        boxes = args.boxes if args.boxes is not None else len(level.boxes)
+    else:
+        size = args.size if args.size is not None else 7
+        boxes = args.boxes if args.boxes is not None else 1
+        level = None
+
+    def generate_next():
+        return generate_play_level(rng, size=size, n_boxes=boxes)
+
+    if level is None:
+        level = generate_next()
+    run_game(level, generate_next, delay_ms=args.delay)
 
 
 def cmd_solve(args):
@@ -336,7 +350,9 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--pretrain-episodes", type=int, default=300)
     e.add_argument("--retrain-episodes", type=int, default=120)
     e.add_argument("--pool", type=int, default=40)
-    e.add_argument("--eval-trials", type=int, default=2)
+    e.add_argument("--eval-trials", type=int, default=4)
+    e.add_argument("--eval-epsilon", type=float, default=0.1,
+                   help="exploration rate when scoring levels for GA fitness; 0 = greedy, i.e. pass/fail fitness")
     e.add_argument("--topk", type=int, default=5)
     e.add_argument("--heldout-size", type=int, default=20)
     e.add_argument("--max-steps", type=int, default=300)
@@ -365,9 +381,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--title", default=None)
     r.set_defaults(func=cmd_render)
 
-    p = sub.add_parser("play", help="Interactive viewer — you play the level")
-    p.add_argument("--level", required=True)
-    p.add_argument("--tk", action="store_true", help="use the Tkinter viewer (no Qt required, recommended)")
+    p = sub.add_parser("play", help="Play a random Sokoban level or load one from JSON")
+    p.add_argument("--level", default=None, help="optional level JSON (otherwise generate a random solvable puzzle)")
+    p.add_argument("--size", type=int, default=None, help="random board size (default: 7, or the loaded level's size)")
+    p.add_argument("--boxes", type=int, default=None, help="random box count (default: 1, or the loaded level's count)")
+    p.add_argument("--seed", type=int, default=None, help="optional RNG seed; by default each launch is random")
+    p.add_argument("--delay", type=int, default=250, help="milliseconds between agent moves (30-5000)")
+    p.add_argument("--tk", action="store_true", help="accepted for compatibility; play uses the Tkinter game window")
     p.set_defaults(func=cmd_play)
 
     w = sub.add_parser("watch", help="Watch an agent (PPO --ppo, DQN --checkpoint) or the A* solver play a level")

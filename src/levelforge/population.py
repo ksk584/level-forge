@@ -280,6 +280,7 @@ def random_solvable_level(
     max_nodes: int = 30000,
     max_steps: int = 300,
     energy_slack: int = 6,
+    stats: Optional[dict] = None,
 ) -> Level:
     """Generate a solvable random level via the reverse-scramble construction.
 
@@ -290,11 +291,17 @@ def random_solvable_level(
     ``max_steps``, and its energy budget is set to the optimal plan's push cost
     plus ``energy_slack``.  (The scramble's own energy tally counts every pull,
     including ones that cancel out, which made budgets ~40x too loose.)
+
+    If ``stats`` is given, ``stats["candidates"]`` counts every candidate produced and
+    ``stats["verified"]`` the ones that passed A* -- the generator's solvability yield,
+    measured the same way as the GA's (verified children / children produced).
     """
     from .solver import verify_level
 
     last_err: Optional[Exception] = None
     for _ in range(max_tries):
+        if stats is not None:
+            stats["candidates"] = stats.get("candidates", 0) + 1
         try:
             level = scramble_level(rng, size, n_boxes, wall_frac, heavy_prob, fragile_prob)
         except ValueError as e:
@@ -306,8 +313,24 @@ def random_solvable_level(
         if info is None:
             continue
         level.energy = info["energy_cost"] + energy_slack
+        if stats is not None:
+            stats["verified"] = stats.get("verified", 0) + 1
         return level
     raise RuntimeError(f"could not generate a solvable level in {max_tries} tries ({last_err})")
+
+
+def generate_play_level(rng: np.random.Generator, size: int = 7, n_boxes: int = 1) -> Level:
+    """Generate an easy, solver-verified puzzle for interactive play."""
+    return random_solvable_level(
+        rng,
+        size=size,
+        n_boxes=n_boxes,
+        wall_frac=0.08,
+        heavy_prob=0.0,
+        fragile_prob=0.0,
+        max_steps=500,
+        energy_slack=8,
+    )
 
 
 def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20,

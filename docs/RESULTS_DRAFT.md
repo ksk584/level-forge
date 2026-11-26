@@ -8,6 +8,11 @@
 
 ### 5.1 What is measured
 
+**All results in this chapter come from the PPO agent** (Stable-Baselines3, small-grid CNN, trained
+by reinforcement learning from scratch). The legacy DQN pipeline and any imitation-learned
+(behaviour-cloning or DAgger) agents are not used here; see "Which agent produced which result" in
+the README.
+
 Every condition starts from the same pretrained PPO agent (per seed), receives the same number of PPO
 environment steps and adds the same number of new levels (16) to its training mixture per cycle. Only the
 way the new levels are chosen differs (Table 1). Success rates are measured with a stochastic policy on test

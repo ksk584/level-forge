@@ -76,16 +76,23 @@ UED_DEFAULTS: Dict = {
 # ---------------------------------------------------------------------- #
 # Level helpers
 # ---------------------------------------------------------------------- #
-def sample_levels(rng: np.random.Generator, n: int, cfg: Dict, n_boxes: Optional[int] = None) -> List[Level]:
+def sample_levels(rng: np.random.Generator, n: int, cfg: Dict, n_boxes: Optional[int] = None,
+                  stats: Optional[Dict] = None) -> List[Level]:
     out: List[Level] = []
     while len(out) < n:
         try:
             out.append(random_solvable_level(
                 rng, size=cfg["size"], n_boxes=n_boxes or cfg["n_boxes"], wall_frac=cfg["wall_frac"],
-                heavy_prob=cfg["heavy_prob"], fragile_prob=cfg["fragile_prob"], max_steps=cfg["max_steps"]))
+                heavy_prob=cfg["heavy_prob"], fragile_prob=cfg["fragile_prob"], max_steps=cfg["max_steps"],
+                stats=stats))
         except RuntimeError:
             continue
     return out
+
+
+def _yield(counts: Dict) -> Optional[float]:
+    """Solvability yield of the random generator: A*-verified candidates / candidates produced."""
+    return counts["verified"] / counts["candidates"] if counts.get("candidates") else None
 
 
 def test_sets(cfg: Dict) -> Dict[str, List[Level]]:
@@ -255,16 +262,20 @@ def run_condition(cfg: Dict, condition: str, seed: int, exp_dir: Path) -> Path:
                 accepted += s
             chosen = _top_k_unique(cands, k, archive_keys)
             row["ga"] = gens
-            row["solvability_yield"] = accepted / attempts if attempts else 1.0
+            row["solvability_yield"] = accepted / attempts if attempts else None
             row.update({f"search_{kk}": v for kk, v in _discovery([c[2] for c in cands]).items()})
         elif condition == "random_search":
-            pool = sample_levels(rng, cfg["population"] * cfg["ga_generations"], cfg)
+            gen_counts: Dict = {}
+            pool = sample_levels(rng, cfg["population"] * cfg["ga_generations"], cfg, stats=gen_counts)
+            row["solvability_yield"] = _yield(gen_counts)
             fit, stats = score_levels(agent, pool, cfg, solver, archive)
             cands = list(zip(fit, pool, stats))
             chosen = _top_k_unique(cands, k, archive_keys)
             row.update({f"search_{kk}": v for kk, v in _discovery(stats).items()})
         else:
-            new = fixed_set if condition == "fixed" else sample_levels(rng, k, cfg)
+            gen_counts = {}
+            new = fixed_set if condition == "fixed" else sample_levels(rng, k, cfg, stats=gen_counts)
+            row["solvability_yield"] = _yield(gen_counts)   # None for "fixed": nothing generated
             fit, stats = score_levels(agent, new, cfg, solver)   # measured only, not used to select
             chosen = list(zip(fit, new, stats))
         new_levels = [c[1] for c in chosen]

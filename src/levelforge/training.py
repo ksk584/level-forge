@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -41,7 +42,7 @@ def generate_level_pool(
 
 
 def episode_stats(agent: DQNAgent, env: SokobanEnv, train: bool = False,
-                  shaping: bool = False, shaping_weight: float = 0.5) -> Dict:
+                  shaping: bool = False, shaping_weight: float = 0.5, explore: bool = False) -> Dict:
     from .shaping import shaped_reward
 
     obs, _ = env.reset()
@@ -50,7 +51,7 @@ def episode_stats(agent: DQNAgent, env: SokobanEnv, train: bool = False,
     done = False
     while not done:
         vec = flatten_obs(obs, env.level.energy)
-        action = agent.select_action(vec, greedy=not train)
+        action = agent.select_action(vec, greedy=not (train or explore))
         if train:
             level_before = env.level.copy() if shaping else None
             next_obs, reward, done, info = env.step(action)
@@ -111,17 +112,31 @@ def evaluate_levels(
     trials: int = 3,
     max_steps: int = 300,
     seed: int = 0,
+    epsilon: float = 0.0,
 ) -> Tuple[List[Dict], Dict]:
-    """Greedy evaluation; returns per-episode records and an aggregate."""
-    rng = np.random.default_rng(seed)
+    """Evaluate ``trials`` episodes per level; returns per-episode records and an aggregate.
+
+    With ``epsilon == 0`` the policy is greedy.  The environment is deterministic, so every
+    trial of a level then replays the same episode and per-level success is pass/fail (0 or 1).
+    With ``epsilon > 0`` each action is random with that probability, drawn from a generator
+    seeded by ``seed``: trials differ, per-level success becomes graded, and the run stays
+    reproducible.  The agent's own epsilon and RNG are restored afterwards.
+    """
+    explore = epsilon > 0.0
+    saved = (agent.epsilon, agent.rng)
+    if explore:
+        agent.epsilon, agent.rng = float(epsilon), random.Random(seed)
     records: List[Dict] = []
-    for i, level in enumerate(levels):
-        for t in range(trials):
-            env = SokobanEnv(level, max_steps=max_steps)
-            stats = episode_stats(agent, env, train=False)
-            stats["level_index"] = i
-            stats["trial"] = t
-            records.append(stats)
+    try:
+        for i, level in enumerate(levels):
+            for t in range(trials):
+                env = SokobanEnv(level, max_steps=max_steps)
+                stats = episode_stats(agent, env, train=False, explore=explore)
+                stats["level_index"] = i
+                stats["trial"] = t
+                records.append(stats)
+    finally:
+        agent.epsilon, agent.rng = saved
     solved = sum(r["solved"] for r in records)
     agg = {
         "success_rate": solved / max(1, len(records)),

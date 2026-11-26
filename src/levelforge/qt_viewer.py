@@ -138,7 +138,7 @@ def run_agent(level: Level, checkpoint: str, delay_ms: int = 350, explore: float
         raise SystemExit(2) from e
     agent.epsilon = max(0.0, min(1.0, explore))
     import random
-    random.seed(seed)
+    agent.rng = random.Random(seed)  # seeds --explore sampling
 
     _install_excepthook()
     app = QtWidgets.QApplication(sys.argv)

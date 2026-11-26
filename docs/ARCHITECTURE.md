@@ -36,10 +36,12 @@ Reward shaping details: the +10 is granted only when the count of boxes-on-goals
 against the *original* box count — a fragile box that shatters deducts from it, so a board
 with a broken box can never report `solved`.
 
-Failure taxonomy feeds both evaluation and GA fitness. `invalid_heavy_push` is a *counted
-non-terminal event* (info flag `invalid_push`), not a terminal failure — it contributes to
-the failure-type statistics if it occurs in greedy evaluation runs only as an event, or may
-be promoted to a metric in the report.
+Failure taxonomy feeds both evaluation and GA fitness. There are **four terminal failure
+types** (`deadlock`, `fragile_break`, `energy_exhaustion`, `timeout`; `FAILURE_TYPES`). A
+blocked push (into a wall or box, or a heavy box without enough energy) is a costly no-op that
+never ends the episode, so it is **not** a failure type: it is a counted event (step flag
+`info["invalid_push"]`, per-episode `invalid_pushes`). Earlier versions listed it as a fifth
+type (`invalid_heavy_push`) although no episode could ever end with it.
 
 ## 3. Deadlocks & solvability (`solvability.py`)
 
@@ -116,9 +118,13 @@ vs generation; Welch's t-test / Mann–Whitney U on final SR and FDE.
 
 * Boxes are interchangeable for feasibility (any box may fill any goal) — standard Sokoban
   convention, and the reason the checker only tracks positions.
-* The reverse-BFS checker ignores agent reachability within free space (it enforces the
-  geometry of pulls but not corridor traversability); it is a filter. Generation correctness
-  does **not** depend on it (reverse-play generator is exact by construction).
+* The reverse-BFS checker (`solvability.is_solvable`) ignores agent reachability within free
+  space (it enforces the geometry of pulls but not whether the player can walk to the box), so
+  it is only a necessary condition. **It is no longer used as a gate anywhere.** Every generated
+  level and every GA child must pass the A* solver (`solver.verify_level`), which simulates the
+  player's moves, the step cap and the energy budget; children that fail are discarded and
+  counted in the solvability yield. `tests/test_fixes.py` includes a level that passes the
+  reverse-BFS check but is unsolvable because the player is walled off; A* rejects it.
 * Heavy/fragile payload mechanics do not change structural solvability; they shape rewards
   and failure categories (used by the GA fitness and evaluation).
 * 10×10 is the default board as per the synopsis's 10–15×15 plan; `--size` is exposed.

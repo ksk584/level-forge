@@ -127,6 +127,9 @@ class DQNAgent:
 
         torch.manual_seed(seed)
         np.random.seed(seed)
+        # Exploration uses its own seeded generator (the global ``random`` module was never seeded,
+        # so the same --seed could give different runs).
+        self.rng = random.Random(seed)
         self.policy_net = build_q_network(height, width, arch=arch, hidden=hidden).to(self.device)
         self.target_net = build_q_network(height, width, arch=arch, hidden=hidden).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -139,8 +142,8 @@ class DQNAgent:
 
     # ------------------------------------------------------------------ #
     def select_action(self, state_vec: np.ndarray, greedy: bool = False) -> int:
-        if not greedy and random.random() < self.epsilon:
-            return random.randrange(ACTION_DIM)
+        if not greedy and self.rng.random() < self.epsilon:
+            return self.rng.randrange(ACTION_DIM)
         with torch.no_grad():
             t = torch.from_numpy(state_vec).float().unsqueeze(0).to(self.device)
             q = self.policy_net(t)

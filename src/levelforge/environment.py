@@ -10,6 +10,11 @@ Rules
 * Energy reaches 0 before the puzzle is solved  => failure ``energy_exhaustion``.
 * A non-goal box in a crush cell                  => failure ``deadlock``.
 * All boxes on goals                               => success (+100).
+* ``max_steps`` reached                            => failure ``timeout``.
+
+A blocked push (into a wall or another box, or a heavy box without enough energy) is a
+costly no-op (-5).  It does NOT end the episode, so it is not a failure type: it is reported
+per step as ``info["invalid_push"]`` and counted per episode (``invalid_pushes``).
 """
 
 from __future__ import annotations
@@ -28,9 +33,11 @@ _DELTAS = [(0, -1), (0, 1), (-1, 0), (1, 0)]
 FAILURE_DEADLOCK = "deadlock"
 FAILURE_FRAGILE = "fragile_break"
 FAILURE_ENERGY = "energy_exhaustion"
-FAILURE_INVALID_PUSH = "invalid_heavy_push"
 FAILURE_TIMEOUT = "timeout"
-FAILURE_TYPES = [FAILURE_DEADLOCK, FAILURE_FRAGILE, FAILURE_ENERGY, FAILURE_INVALID_PUSH, FAILURE_TIMEOUT]
+# Terminal failure types: each one ends the episode.
+FAILURE_TYPES = [FAILURE_DEADLOCK, FAILURE_FRAGILE, FAILURE_ENERGY, FAILURE_TIMEOUT]
+# Non-terminal event (never ends an episode, so never appears as an episode's failure).
+EVENT_INVALID_PUSH = "invalid_push"
 
 
 class SokobanEnv:
@@ -105,7 +112,8 @@ class SokobanEnv:
             # Heavy boxes additionally require enough remaining energy.
             if not target_free or self.level.energy < cost:
                 reward -= 5.0
-                # Invalid heavy-box push: costly no-op, counted via info['invalid_push']
+                # Blocked push (wall/box behind it, or heavy box without energy): costly no-op,
+                # not terminal -- reported via info['invalid_push'] (EVENT_INVALID_PUSH).
                 return self._after(reward, failure=None, invalid_push=True)
             self.level.energy -= cost
             boxes = list(self.level.boxes)

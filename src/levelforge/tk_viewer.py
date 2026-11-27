@@ -4,6 +4,10 @@ Launch:
     python -m levelforge play  --level L.json --tk                     (you play)
     python -m levelforge watch --level L.json --checkpoint C.pt --tk    (agent replay)
 
+Play mode has three buttons: Player (you), RL agent (the PPO policy) and A* solver; the
+agents continue from the current position.  Puzzles you solve unaided are saved and the RL
+agent learns from them (``player_learning.py``).
+
 Controls (both modes): Arrows/WASD move (human) | R restart | Esc quit
 Agent mode: Space pause | +/- speed | R restart
 """
@@ -11,6 +15,7 @@ Agent mode: Space pause | +/- speed | R restart
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_NORMAL, Level
 
@@ -19,6 +24,7 @@ CELL = 44
 _COLORS = {
     "wall": "#111827",
     "floor": "#f9fafb",
+    "rough": "#d6b98c",
     "goal": "#16a34a",
     "agent": "#2563eb",
     f"box_{BOX_NORMAL}": "#c08457",
@@ -30,25 +36,16 @@ _DIR = {"Up": 0, "w": 0, "Down": 1, "s": 1, "Left": 2, "a": 2, "Right": 3, "d": 
 
 
 class _PPOActor:
-    """Drives the viewer with a PPO model.zip (sampled actions, as in evaluation, unless deterministic)."""
+    """Drives the viewer with a loaded PPO model (sampled actions, as in evaluation, unless deterministic)."""
 
-    def __init__(self, path: str, level: Level, deterministic: bool, seed: int):
-        import torch
+    def __init__(self, model, deterministic: bool = False):
+        self.model, self.deterministic = model, deterministic
 
-        from .ppo_agent import PPOAgent
-
-        torch.manual_seed(seed)
-        self.agent = PPOAgent.load(path, [level], device="cpu", n_envs=1, batch_size=128)  # inference only
-        self.deterministic = deterministic
-        self.epsilon = 0.0
-        self.level: Level | None = None  # set by the viewer before each step
-
-    def select_action(self, vec, greedy: bool = True):
+    def act(self, level: Level) -> int:
         from .gym_env import encode_obs
 
-        if self.level is None:
-            raise RuntimeError("PPO actor level was not set before selecting an action")
-        return int(self.agent.act(encode_obs(self.level)[None], self.deterministic)[0])
+        action, _ = self.model.predict(encode_obs(level)[None], deterministic=self.deterministic)
+        return int(action[0])
 
 
 class _SolverActor:
@@ -66,7 +63,8 @@ class _SolverActor:
 def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, seed: int,
          solver_moves: list[int] | None = None, ppo_model: str | None = None,
          deterministic: bool = False, max_steps: int | None = None,
-         level_factory: Callable[[], Level] | None = None, switchable: bool = False):
+         level_factory: Callable[[], Level] | None = None, switchable: bool = False,
+         learn_dir: str | None = None):
     try:
         import tkinter as tk
     except ImportError as e:  # pragma: no cover
@@ -85,8 +83,13 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
                 return self._moves.pop(0) if self._moves else 0
         agent = SolverAgent(solver_moves)
         mode = "A* solver replay"
-    elif ppo_model:
-        agent = _PPOActor(ppo_model, level, deterministic, seed)
+    elif ppo_model and not switchable:
+        import torch
+
+        from .player_learning import load_model
+
+        torch.manual_seed(seed)
+        agent = _PPOActor(load_model(ppo_model), deterministic)
         mode = f"PPO agent: {ppo_model}"
     else:
         agent = None
@@ -112,6 +115,10 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         "obs": None,
         "after_id": None,
         "notice": "",
+        "mode": "player",       # play mode: player | rl | astar
+        "model": None,          # PPO model, loaded on first use
+        "moves": [],            # the player's actions since the level (re)started
+        "assisted": False,      # an agent moved during this attempt -> not recorded
     }
 
     root = tk.Tk()
@@ -127,10 +134,11 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
     controls.pack(fill="x")
     if level_factory is not None:
         tk.Button(controls, text="New random puzzle", command=lambda: new_level()).pack(side="left", padx=6, pady=6)
-    mode_button = None
+    mode_buttons = {}
     if switchable:
-        mode_button = tk.Button(controls, text="Switch to agent", command=lambda: toggle_agent())
-        mode_button.pack(side="left", padx=6, pady=6)
+        for key, text in (("player", "Player"), ("rl", "RL agent"), ("astar", "A* solver")):
+            mode_buttons[key] = tk.Button(controls, text=text, command=lambda k=key: set_mode(k))
+            mode_buttons[key].pack(side="left", padx=6, pady=6)
 
     def statustext():
         env = state["env"]
@@ -152,6 +160,7 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         lv = env.level
         canvas.delete("all")
         goals = set(lv.goals)
+        rough = set(lv.rough)
         box_map = {(x, y): k for x, y, k in lv.boxes}
         for y in range(lv.height):
             for x in range(lv.width):
@@ -159,7 +168,12 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
                 if lv.walls[y, x]:
                     canvas.create_rectangle(x0, y0, x1, y1, fill=_COLORS["wall"], outline="#374151")
                     continue
-                canvas.create_rectangle(x0, y0, x1, y1, fill=_COLORS["floor"], outline="#e5e7eb")
+                canvas.create_rectangle(x0, y0, x1, y1, outline="#e5e7eb",
+                                        fill=_COLORS["rough" if (x, y) in rough else "floor"])
+                if (x, y) in rough:  # gravel dots: fragile boxes break here
+                    for dx, dy in ((0.25, 0.3), (0.6, 0.2), (0.4, 0.65), (0.75, 0.7), (0.2, 0.8)):
+                        cx, cy = x0 + dx * CELL, y0 + dy * CELL
+                        canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill="#8b6b3e", outline="")
                 if (x, y) in goals:
                     r = CELL // 5
                     cx, cy = x * CELL + CELL // 2, y * CELL + CELL // 2
@@ -179,8 +193,8 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
                            (ax_ + 1) * CELL - pad, (ay_ + 1) * CELL - pad,
                            fill=_COLORS["agent"], outline="#1e3a8a", width=2)
         status.config(text=statustext())
-        if mode_button is not None:
-            mode_button.config(text="Switch to player" if state["agent"] else "Switch to agent")
+        for key, button in mode_buttons.items():
+            button.config(relief="sunken" if state["mode"] == key else "raised")
 
     def cancel_agent_tick():
         if state["after_id"] is not None:
@@ -205,24 +219,72 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
             draw()
             return
         state["agent"] = _SolverActor(moves)
-        state["notice"] = f"Agent solving in {len(moves)} moves"
+        state["mode"] = "astar"
+        state["notice"] = f"A* solving in {len(moves)} moves"
         state["obs"] = None
         state["paused"] = False
         draw()
         state["after_id"] = root.after(state["delay"], agent_tick)
 
-    def toggle_agent():
-        if state["agent"] is not None:
-            cancel_agent_tick()
-            state["agent"] = None
-            state["paused"] = False
-            state["notice"] = "Player mode"
-            draw()
+    def get_model():
+        if state["model"] is None and ppo_model and Path(ppo_model).exists():
+            from .player_learning import load_model
+            state["model"] = load_model(ppo_model)
+        return state["model"]
+
+    def model_fits(model) -> bool:
+        return tuple(model.observation_space.shape[1:]) == state["env"].level.walls.shape
+
+    def start_rl_agent():
+        model = get_model()
+        if model is None:
+            state["notice"] = "No RL model found: pass --ppo <model.zip>"
+        elif not model_fits(model):
+            h, w = model.observation_space.shape[1:]
+            state["notice"] = f"RL agent was trained on {w}x{h} boards only"
         else:
-            state["notice"] = "Agent planning..."
+            state["agent"] = _PPOActor(model)
+            state["mode"] = "rl"
+            state["notice"] = "RL agent playing"
+            state["paused"] = False
+            state["after_id"] = root.after(state["delay"], agent_tick)
+        draw()
+
+    def set_mode(mode):
+        cancel_agent_tick()
+        state["agent"] = None
+        state["paused"] = False
+        state["mode"] = "player"
+        if mode == "player":
+            state["notice"] = "Player mode"
+        elif state["env"].done:
+            state["notice"] = "Puzzle is over: press R to restart"
+        else:
+            state["notice"] = "A* planning..." if mode == "astar" else "Loading RL agent..."
             draw()
             root.update_idletasks()
-            start_solver_agent()
+            start_solver_agent() if mode == "astar" else start_rl_agent()
+            return
+        draw()
+
+    def on_player_solved():
+        from .player_learning import learn_from_players, load_games, record_game
+
+        games_path = Path(learn_dir) / "games.jsonl"
+        record_game(games_path, state["level"], state["moves"])
+        model = get_model()
+        if model is None:
+            state["notice"] = f"Game saved to {games_path} (no RL model loaded to learn from it)"
+            return
+        if not model_fits(model):
+            state["notice"] = "Game saved (the RL agent only learns from boards of its own size)"
+            return
+        state["notice"] = "Game saved - RL agent is learning from your solve..."
+        draw()
+        root.update_idletasks()
+        info = learn_from_players(model, load_games(games_path))
+        model.save(str(Path(learn_dir) / "model.zip"))
+        state["notice"] = f"RL agent learned from {info['games']} player game(s)"
 
     def new_level():
         if level_factory is None:
@@ -239,6 +301,8 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
             f"+{root.winfo_screenheight() // 2 - new_height // 2}"
         )
         state["agent"] = None
+        state["mode"] = "player"
+        state["moves"], state["assisted"] = [], False
         state["obs"] = None
         state["paused"] = False
         state["notice"] = "New random puzzle"
@@ -259,15 +323,17 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         if isinstance(current_agent, _SolverActor):
             if not current_agent.has_moves:
                 state["agent"] = None
+                state["mode"] = "player"
                 state["notice"] = "Agent stopped before solving"
                 draw()
                 return
             action = current_agent.select_action()
+        elif isinstance(current_agent, _PPOActor):
+            action = current_agent.act(env.level)
         else:
-            if isinstance(current_agent, _PPOActor):
-                current_agent.level = env.level
             vec = flatten_obs(state["obs"], env.level.energy)
             action = current_agent.select_action(vec, greedy=(explore <= 0.0))
+        state["assisted"] = True
         state["obs"], _r, _done, _info = env.step(action)
         state["notice"] = ""
         draw()
@@ -279,9 +345,10 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
         cancel_agent_tick()
         state["env"] = SokobanEnv(state["level"], max_steps=max_steps)
         state["notice"] = ""
-        if switchable and current_agent is not None:
+        state["moves"], state["assisted"] = [], False
+        if switchable and state["mode"] != "player":
             state["agent"] = None
-            start_solver_agent()
+            start_solver_agent() if state["mode"] == "astar" else start_rl_agent()
         elif current_agent:
             state["obs"], _ = state["env"].reset()
             state["after_id"] = root.after(state["delay"], agent_tick)
@@ -306,8 +373,12 @@ def _run(level: Level, checkpoint: str | None, delay_ms: int, explore: float, se
                 state["delay"] = min(5000, int(state["delay"] * 1.5)); draw(); return
             return
         if key in _DIR and not state["env"].done:
+            env = state["env"]
             state["notice"] = ""
-            state["env"].step(_DIR[key])
+            env.step(_DIR[key])
+            state["moves"].append(_DIR[key])
+            if switchable and env.done and env.failure is None and not state["assisted"]:
+                on_player_solved()
             draw()
 
     root.bind("<Key>", on_key)
@@ -328,9 +399,10 @@ def run(level: Level):
     _run(level, checkpoint=None, delay_ms=0, explore=0.0, seed=0)
 
 
-def run_game(level: Level, generate_next: Callable[[], Level], delay_ms: int = 250):
-    _run(level, checkpoint=None, delay_ms=delay_ms, explore=0.0, seed=0,
-         max_steps=500, level_factory=generate_next, switchable=True)
+def run_game(level: Level, generate_next: Callable[[], Level], delay_ms: int = 250,
+             ppo_model: str | None = None, learn_dir: str = "runs/player_learning"):
+    _run(level, checkpoint=None, delay_ms=delay_ms, explore=0.0, seed=0, ppo_model=ppo_model,
+         max_steps=500, level_factory=generate_next, switchable=True, learn_dir=learn_dir)
 
 
 def run_agent(level: Level, checkpoint: str, delay_ms: int = 350, explore: float = 0.0, seed: int = 0):

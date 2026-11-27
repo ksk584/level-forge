@@ -30,10 +30,14 @@ def crossover(a: Level, b: Level, rng: np.random.Generator, allow_kinds: bool = 
     if (b.height, b.width) != (h, w):
         return None
     child_walls = a.walls.copy()
+    rough = set(a.rough)
     hy, wy = h // 2, w // 2
     for y0, y1, x0, x1 in ((0, hy, 0, wy), (0, hy, wy, w), (hy, h, 0, wy), (hy, h, wy, w)):
         if rng.random() < 0.5:
             child_walls[y0:y1, x0:x1] = b.walls[y0:y1, x0:x1]
+            # Rough floor travels with the walls of its block.
+            inside = lambda c: x0 <= c[0] < x1 and y0 <= c[1] < y1  # noqa: E731
+            rough = {c for c in rough if not inside(c)} | {c for c in b.rough if inside(c)}
 
     goals = []
     for g in a.goals:
@@ -53,7 +57,7 @@ def crossover(a: Level, b: Level, rng: np.random.Generator, allow_kinds: bool = 
 
     agent = a.agent if rng.random() < 0.5 else b.agent
     energy = int(round(0.5 * a.energy + 0.5 * b.energy + rng.integers(-2, 3)))
-    child = Level(child_walls, goals, boxes, agent, energy)
+    child = Level(child_walls, goals, boxes, agent, energy, sorted(rough))
     return repair_level(child, rng, n_boxes=len(a.boxes), allow_kinds=allow_kinds)
 
 
@@ -92,7 +96,7 @@ def mutate(level: Level, rng: np.random.Generator,
     if rng.random() < p_energy:
         energy = int(np.clip(energy + rng.integers(-3, 4), 6, 60))
 
-    child = Level(walls, goals, boxes, (ax, ay), energy)
+    child = Level(walls, goals, boxes, (ax, ay), energy, level.rough)
     return repair_level(child, rng, n_boxes=len(level.boxes), allow_kinds=p_kind > 0)
 
 

@@ -165,7 +165,7 @@ def generate_expert_dataset(
                             if not level.walls[c[1], c[0]] and c not in box_coords and c != level.agent]
                     rng.shuffle(free)
                     for alt_agent in free[:multi_start]:
-                        alt_lvl = Level(level.walls, level.goals, level.boxes, alt_agent, level.energy)
+                        alt_lvl = Level(level.walls, level.goals, level.boxes, alt_agent, level.energy, level.rough)
                         alt_moves, _, _ = solve(alt_lvl, max_nodes=10000, time_limit_s=0.5)
                         if alt_moves:
                             st, lb, sol = collect_solver_samples(alt_lvl, alt_moves)

@@ -19,7 +19,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from .fitness import SolverCache, level_key
+from .fitness import SolverCache
 from .genetic import next_generation, population_diversity
 from .ued import UED_DEFAULTS, sample_levels, save_levels, score_levels
 from .ppo_agent import PPOAgent, set_torch_threads
@@ -37,13 +37,12 @@ def _run(method: str, agent, cfg: Dict, budget: int, seed: int) -> Dict:
     best = 0.0
     while evaluated < budget:
         batch = population if method == "ga" else sample_levels(rng, P, cfg)
-        if method == "ga" and evaluated == 0:
-            batch = population
         fit, stats = score_levels(agent, batch, cfg, solver)
         evaluated += len(batch)
         for lvl, st in zip(batch, stats):
             if st["solvable"] and st["success"] == 0.0:
-                found.setdefault(level_key(lvl), lvl)
+                # Distinct by layout: GA variants that differ only in energy count once.
+                found.setdefault(lvl.to_ascii(), lvl)
         best = max(best, max(s["regret"] for s in stats))
         curve.append({
             "evaluated": evaluated, "breaking_found": len(found),

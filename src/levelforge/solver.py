@@ -24,8 +24,8 @@ import heapq
 import time
 from typing import Dict, List, Optional
 
-from .grid import PUSH_COST, Level
-from .solvability import crush_cells
+from .grid import BOX_FRAGILE, PUSH_COST, Level
+from .solvability import any_frozen_off_goal, crush_cells
 
 _DIRS = [(0, -1), (0, 1), (-1, 0), (1, 0)]
 
@@ -34,16 +34,25 @@ def _heur(boxes, goals) -> int:
     return sum(min(abs(bx - gx) + abs(by - gy) for gx, gy in goals) for bx, by, _k in boxes)
 
 
-def solve(level: Level, max_nodes: int = 200_000, time_limit_s: float = 20.0):
-    """Return (moves, nodes, elapsed_s).  ``moves`` is a list of action indices, or None."""
+def solve(level: Level, max_nodes: int = 200_000, time_limit_s: float = 20.0,
+          energy_budget: Optional[int] = None):
+    """Return (moves, nodes, elapsed_s).  ``moves`` is a list of action indices, or None.
+
+    With ``energy_budget`` the search tracks push-energy spent (state gains a third
+    field) and only returns plans the environment accepts within that budget: a push
+    is refused if it costs more than what is left, and running out before the last
+    push fails the episode.  Without it, plans are move-optimal regardless of energy.
+    """
     t0 = time.time()
     walls = level.walls
     h, w = walls.shape
     goals = list(level.goals)
     goal_set = set(goals)
     crush = crush_cells(level)
-    initial = (level.agent, tuple(sorted(level.boxes)))
-    if any((x, y) in crush for x, y, _k in initial[1]):
+    rough = set(level.rough)
+    boxes0 = tuple(sorted(level.boxes))
+    initial = (level.agent, boxes0) if energy_budget is None else (level.agent, boxes0, 0)
+    if any((x, y) in crush for x, y, _k in boxes0):
         return None, 0, time.time() - t0
 
     counter = 0
@@ -56,7 +65,7 @@ def solve(level: Level, max_nodes: int = 200_000, time_limit_s: float = 20.0):
         _f, g, _c, state = heapq.heappop(heap)
         if g > best_g.get(state, g):
             continue  # stale heap entry
-        agent, boxes = state
+        agent, boxes = state[0], state[1]
         nodes += 1
         if nodes > max_nodes or ((nodes & 0xFFF) == 0 and time.time() - t0 > time_limit_s):
             return None, nodes, time.time() - t0
@@ -82,10 +91,21 @@ def solve(level: Level, max_nodes: int = 200_000, time_limit_s: float = 20.0):
                 if (tx, ty) in crush:
                     continue  # deadlock / fragile break
                 kind = box_at[(nx, ny)]
+                if kind == BOX_FRAGILE and (tx, ty) in rough:
+                    continue  # fragile box would shatter on rough floor
                 new_boxes = tuple(sorted([b for b in boxes if (b[0], b[1]) != (nx, ny)] + [(tx, ty, kind)]))
-                new_state = ((nx, ny), new_boxes)
+                if any_frozen_off_goal(walls, new_boxes, goal_set, crush):
+                    continue  # freeze deadlock: the environment ends the episode here
+                if energy_budget is None:
+                    new_state = ((nx, ny), new_boxes)
+                else:
+                    spent = state[2] + PUSH_COST[kind]
+                    done_after = all((x, y) in goal_set for x, y, _k in new_boxes)
+                    if spent > energy_budget or (spent == energy_budget and not done_after):
+                        continue  # push refused, or energy exhausted before completion
+                    new_state = ((nx, ny), new_boxes, spent)
             else:
-                new_state = ((nx, ny), boxes)
+                new_state = ((nx, ny), boxes) if energy_budget is None else ((nx, ny), boxes, state[2])
             ng = g + 1
             if ng >= best_g.get(new_state, 1 << 30):
                 continue
@@ -143,9 +163,15 @@ def verify_level(level: Level, max_steps: int = 300, max_nodes: int = 60_000,
         return None
     cost = plan_energy(level, moves)
     if cost > level.energy:
-        if not fix_energy:
-            return None
-        level.energy = cost
+        if fix_energy:
+            level.energy = cost
+        else:
+            # The move-optimal plan is over budget; a longer, cheaper plan may still fit.
+            moves, _nodes, _t = solve(level, max_nodes=max_nodes, time_limit_s=time_limit_s,
+                                      energy_budget=level.energy)
+            if moves is None or len(moves) > max_steps:
+                return None
+            cost = plan_energy(level, moves)
     rep = replay_return(level, moves, max_steps=max_steps)
     if not rep["solved"]:  # should never happen; guards against rule drift
         return None

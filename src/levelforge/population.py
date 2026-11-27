@@ -7,7 +7,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from .grid import BOX_FRAGILE, BOX_HEAVY, BOX_KINDS, BOX_NORMAL, PUSH_COST, Level
-from .solvability import is_solvable
 
 
 def _components(walls: np.ndarray) -> List[List[Tuple[int, int]]]:
@@ -34,6 +33,18 @@ def _components(walls: np.ndarray) -> List[List[Tuple[int, int]]]:
     return comps
 
 
+def _random_kinds(rng: np.random.Generator, n_boxes: int, heavy_prob: float, fragile_prob: float) -> List[int]:
+    """At most one heavy and one fragile box (for balance); the rest are normal."""
+    kinds = [BOX_NORMAL] * n_boxes
+    if rng.random() < heavy_prob:
+        kinds[int(rng.integers(0, n_boxes))] = BOX_HEAVY
+    if rng.random() < fragile_prob:
+        fragile_candidates = [i for i, k in enumerate(kinds) if k == BOX_NORMAL]
+        if fragile_candidates:
+            kinds[int(rng.choice(fragile_candidates))] = BOX_FRAGILE
+    return kinds
+
+
 def scramble_level(
     rng: np.random.Generator,
     size: int = 10,
@@ -45,8 +56,13 @@ def scramble_level(
     min_pulls: int = 4,
     energy_slack: int = 8,
     trace: Optional[list] = None,
+    rough_frac: float = 0.15,
+    kinds: Optional[List[int]] = None,
 ) -> Level:
     """Generate a *guaranteed solvable* level by reverse Sokoban play.
+
+    ``kinds`` fixes the box types (one per box, any mix); otherwise ``heavy_prob`` /
+    ``fragile_prob`` give at most one heavy and one fragile box.
 
     Starting from the solved state (boxes on goals, agent anywhere free), a
     random agent performs a sequence of legal reverse moves -- walks and
@@ -60,6 +76,11 @@ def scramble_level(
     If ``trace`` is provided, the reverse-step direction per move (as an
     action index, ``0=up 1=down 2=left 3=right``) is appended to it — use
     ``expert.forward_actions()`` to obtain the matching forward actions.
+
+    If the level has a fragile box, ``rough_frac`` of the free non-goal cells become rough
+    floor; the reverse play never moves the fragile box across them, so a safe route exists.
+    (No rough tiles and no extra random draws without a fragile box, so plain-box levels are
+    unchanged for a given seed.)
     """
     h = w = size
     walls = np.zeros((h, w), dtype=bool)
@@ -77,16 +98,18 @@ def scramble_level(
     goals = [free_cells[i] for i in goals_idx]
     box_pos = list(goals)
 
-    # Assign payload kinds (at most one heavy and one fragile for balance).
-    kinds = [BOX_NORMAL] * n_boxes
-    if rng.random() < heavy_prob:
-        heavy_idx = int(rng.integers(0, n_boxes))
-        kinds[heavy_idx] = BOX_HEAVY
-    if rng.random() < fragile_prob:
-        fragile_candidates = [i for i, k in enumerate(kinds) if k == BOX_NORMAL]
-        if fragile_candidates:
-            fragile_idx = int(rng.choice(fragile_candidates))
-            kinds[fragile_idx] = BOX_FRAGILE
+    if kinds is not None:
+        if len(kinds) != n_boxes:
+            raise ValueError(f"kinds has {len(kinds)} entries for {n_boxes} boxes")
+        kinds = [int(k) for k in kinds]
+    else:
+        kinds = _random_kinds(rng, n_boxes, heavy_prob, fragile_prob)
+
+    rough: set = set()
+    if BOX_FRAGILE in kinds and rough_frac > 0:
+        open_cells = [c for c in free_cells if c not in set(goals)]
+        n_rough = int(round(rough_frac * len(open_cells)))
+        rough = {open_cells[i] for i in rng.choice(len(open_cells), size=n_rough, replace=False)}
 
     def cell_free(x, y, exclude):
         return 0 <= x < w and 0 <= y < h and not walls[y, x] and (x, y) not in exclude
@@ -140,6 +163,8 @@ def scramble_level(
                 # not be a non-goal crush cell.
                 if (px, py) in crush:
                     continue
+                if kinds[i] == BOX_FRAGILE and (px, py) in rough:
+                    continue  # forward play would push the fragile box onto rough floor
                 targets[(px, py)] = (i, f)
         return targets
 
@@ -175,11 +200,6 @@ def scramble_level(
         box_set = set(box_pos)
         targets = pull_targets(box_set)
         if not targets:
-            import os
-            if os.environ.get("LEVELFORGE_DEBUG"):
-                print(f"[debug] pulls={pulls} box_pos={box_pos} goals={goals}")
-                print(walls.astype(int))
-                print("crush:", crush)
             raise ValueError("no pull is legal anywhere")
         path, dest = bfs(agent, set(targets))
         if dest is None:
@@ -200,16 +220,13 @@ def scramble_level(
             # The agent stepped opposite to f.
             trace.append(dir_to_action[(-f[0], -f[1])])
     if pulls < min_pulls:
-        import os
-        if os.environ.get("LEVELFORGE_DEBUG"):
-            print(f"[debug] pulls={pulls} agent={agent} boxes={box_pos} walls=\\n{walls.astype(int)}")
         raise ValueError("scramble did not displace boxes enough")
     if set(box_pos) == set(goals):
         raise ValueError("scramble left every box on a goal")
 
     boxes = [(x, y, k) for (x, y), k in zip(box_pos, kinds)]
     energy = push_energy + energy_slack
-    return Level(walls, list(goals), boxes, agent, energy)
+    return Level(walls, list(goals), boxes, agent, energy, sorted(rough))
 
 
 def random_level(
@@ -281,6 +298,8 @@ def random_solvable_level(
     max_steps: int = 300,
     energy_slack: int = 6,
     stats: Optional[dict] = None,
+    rough_frac: float = 0.15,
+    kinds: Optional[List[int]] = None,
 ) -> Level:
     """Generate a solvable random level via the reverse-scramble construction.
 
@@ -303,7 +322,8 @@ def random_solvable_level(
         if stats is not None:
             stats["candidates"] = stats.get("candidates", 0) + 1
         try:
-            level = scramble_level(rng, size, n_boxes, wall_frac, heavy_prob, fragile_prob)
+            level = scramble_level(rng, size, n_boxes, wall_frac, heavy_prob, fragile_prob, rough_frac=rough_frac,
+                                   kinds=kinds)
         except ValueError as e:
             last_err = e
             continue
@@ -319,18 +339,51 @@ def random_solvable_level(
     raise RuntimeError(f"could not generate a solvable level in {max_tries} tries ({last_err})")
 
 
-def generate_play_level(rng: np.random.Generator, size: int = 7, n_boxes: int = 1) -> Level:
-    """Generate an easy, solver-verified puzzle for interactive play."""
-    return random_solvable_level(
-        rng,
-        size=size,
-        n_boxes=n_boxes,
-        wall_frac=0.08,
-        heavy_prob=0.0,
-        fragile_prob=0.0,
-        max_steps=500,
-        energy_slack=8,
-    )
+def generate_play_level(rng: np.random.Generator, size: int = 7, n_boxes: int = 1,
+                        heavy: bool = False, fragile: bool = False, mix: bool = False) -> Level:
+    """Generate an easy, solver-verified puzzle for interactive play.
+
+    ``heavy`` / ``fragile`` guarantee one heavy / one fragile box; they need
+    ``n_boxes >= heavy + fragile``.  ``mix`` instead draws a random combination of plain, heavy
+    and fragile boxes (at least two different types; ``n_boxes`` boxes if >= 2, else 2 or 3).
+    With a fragile box the level also has rough floor tiles, and puzzles are redrawn until the
+    rough tiles block the shortest route, so the player has to find a safe one.
+    """
+    from .solver import solve
+
+    kinds = None
+    if mix:
+        if heavy or fragile:
+            raise ValueError("use either mix or heavy/fragile")
+        n_boxes = n_boxes if n_boxes >= 2 else int(rng.integers(2, 4))
+        kinds = [int(k) for k in rng.integers(0, 3, n_boxes)]
+        while len(set(kinds)) < 2:
+            kinds = [int(k) for k in rng.integers(0, 3, n_boxes)]
+        fragile = BOX_FRAGILE in kinds
+    if n_boxes < int(heavy) + int(fragile) and not mix:
+        raise ValueError("--heavy and --fragile together need at least 2 boxes")
+    # shortcut: up to 30 redraws; after that a puzzle whose rough tiles don't matter is accepted.
+    for _ in range(30 if fragile else 1):
+        level = random_solvable_level(
+            rng,
+            size=size,
+            n_boxes=n_boxes,
+            wall_frac=0.08,
+            heavy_prob=1.0 if heavy else 0.0,
+            fragile_prob=1.0 if fragile else 0.0,
+            max_steps=500,
+            energy_slack=8,
+            rough_frac=0.25,
+            kinds=kinds,
+        )
+        if not fragile:
+            return level
+        smooth = level.copy()
+        smooth.rough = []
+        safe, unsafe = solve(level)[0], solve(smooth)[0]
+        if safe is not None and unsafe is not None and len(safe) > len(unsafe):
+            return level
+    return level
 
 
 def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20,
@@ -345,7 +398,7 @@ def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20,
     walls = level.walls.copy()
     walls[0, :] = walls[-1, :] = True
     walls[:, 0] = walls[:, -1] = True
-    level = Level(walls, level.goals, level.boxes, level.agent, level.energy)
+    level = Level(walls, level.goals, level.boxes, level.agent, level.energy, level.rough)
 
     free_cells = [(x, y) for y in range(h) for x in range(w) if not walls[y, x]]
     if len(free_cells) < 8:
@@ -398,7 +451,8 @@ def repair_level(level: Level, rng: np.random.Generator, max_tries: int = 20,
         ax, ay = c
     energy = int(np.clip(level.energy, 6, 60))
     try:
-        repaired = Level(walls, goals, boxes, (ax, ay), energy)
+        rough = [c for c in level.rough if c in free_set and c not in goals]
+        repaired = Level(walls, goals, boxes, (ax, ay), energy, rough)
     except ValueError:
         return None
     if repaired.validate():
@@ -438,7 +492,7 @@ def _resolve_overlap(level: Level, rng: np.random.Generator) -> Optional[Level]:
             return None
         ax, ay = candidates[int(rng.integers(0, len(candidates)))]
     try:
-        out = Level(level.walls, goals, boxes, (ax, ay), level.energy)
+        out = Level(level.walls, goals, boxes, (ax, ay), level.energy, level.rough)
     except ValueError:
         return None
     return out if not out.validate() else None

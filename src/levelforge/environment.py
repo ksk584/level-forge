@@ -5,10 +5,12 @@ Rules
 * Move (walk)            : free; wall / blocked box => no-op, small penalty.
 * Push normal box (n)    : 1 energy; box must land on a free cell.
 * Push heavy box (h)     : 3 energy; cannot be pushed with insufficient energy.
-* Push fragile box (f)   : 1 energy; if the box lands in a crush cell
-  (corner or wall-line without a goal) it shatters and the episode fails.
+* Push fragile box (f)   : 1 energy; if the box lands on a rough floor tile
+  (``Level.rough``, '~') or in a crush cell it shatters and the episode fails.
+  The agent and normal/heavy boxes cross rough tiles freely.
 * Energy reaches 0 before the puzzle is solved  => failure ``energy_exhaustion``.
-* A non-goal box in a crush cell                  => failure ``deadlock``.
+* A non-goal box in a crush cell, or frozen by
+  other boxes (freeze deadlock)                    => failure ``deadlock``.
 * All boxes on goals                               => success (+100).
 * ``max_steps`` reached                            => failure ``timeout``.
 
@@ -24,7 +26,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from .grid import BOX_FRAGILE, PUSH_COST, Level
-from .solvability import box_is_deadlocked, crush_cells
+from .solvability import any_frozen_off_goal, box_is_deadlocked, crush_cells
 
 ACTION_UP, ACTION_DOWN, ACTION_LEFT, ACTION_RIGHT = 0, 1, 2, 3
 ACTION_NAMES = ["up", "down", "left", "right"]
@@ -58,6 +60,8 @@ class SokobanEnv:
         self.placed_reward_given = self.level.boxes_on_goals()
         # Dead squares depend only on walls + goals: compute once per episode.
         self._crush = crush_cells(self.level)
+        self._rough = set(self.level.rough)
+        self._crush_fragile = crush_cells(self.level, fragile=True) if self._rough else self._crush
         return self._obs(), self._info()
 
     # ------------------------------------------------------------------ #
@@ -127,14 +131,19 @@ class SokobanEnv:
                 self.placed_reward_given = placed
             elif placed < self.placed_reward_given:
                 self.placed_reward_given = placed
-            # Fragile box landing in a crush cell shatters.
-            if kind == BOX_FRAGILE and (tx, ty) not in self.level.goal_set() and (tx, ty) in crush:
+            # Fragile box shatters on a rough tile, or in a crush cell.
+            if kind == BOX_FRAGILE and ((tx, ty) in self._rough
+                                        or ((tx, ty) not in self.level.goal_set() and (tx, ty) in crush)):
                 self.level.boxes = [b for b in self.level.boxes if not (b[0] == tx and b[1] == ty and b[2] == BOX_FRAGILE)]
                 return self._after(reward - 15.0, failure=FAILURE_FRAGILE)
             # Generic deadlock check (any non-goal box irreversibly stuck).
-            for bx2, by2, _k in self.level.boxes:
-                if box_is_deadlocked(self.level, (bx2, by2), crush):
+            for bx2, by2, k2 in self.level.boxes:
+                dead = self._crush_fragile if k2 == BOX_FRAGILE else crush
+                if box_is_deadlocked(self.level, (bx2, by2), dead):
                     return self._after(reward - 10.0, failure=FAILURE_DEADLOCK)
+            # Multi-box freeze deadlock (boxes jamming each other against walls).
+            if any_frozen_off_goal(self.level.walls, self.level.boxes, self.level.goal_set(), crush):
+                return self._after(reward - 10.0, failure=FAILURE_DEADLOCK)
             if self._is_complete():
                 return self._after(reward + 100.0, failure=None, solved=True)
             if self.level.energy <= 0:

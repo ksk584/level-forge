@@ -26,7 +26,9 @@ def render_level(level: Level, path: str, title: str | None = None):
             if level.walls[y, x]:
                 axis.add_patch(mpatches.Rectangle((x, y), 1, 1, facecolor="#111827", edgecolor="#374151"))
             else:
-                axis.add_patch(mpatches.Rectangle((x, y), 1, 1, facecolor="#f9fafb", edgecolor="#e5e7eb"))
+                rough = (x, y) in level.rough
+                axis.add_patch(mpatches.Rectangle((x, y), 1, 1, facecolor="#d6b98c" if rough else "#f9fafb",
+                                                  edgecolor="#e5e7eb", hatch=".." if rough else None))
 
     for gx, gy in level.goals:
         axis.add_patch(mpatches.Circle((gx + 0.5, gy + 0.5), 0.18, facecolor="#16a34a", alpha=0.85))

@@ -73,3 +73,66 @@ def test_box_on_goal_counts_only_remaining():
     env = SokobanEnv(level)
     env.step(3)
     assert env.level.boxes_on_goals() == 1
+
+
+FREEZE = """########
+#      #
+# nn   #
+# n n@ #
+#      #
+# .... #
+########"""
+
+
+def test_pushing_into_a_2x2_box_block_is_a_freeze_deadlock():
+    from levelforge.environment import FAILURE_DEADLOCK
+    from levelforge.solvability import any_frozen_off_goal, crush_cells
+
+    level = Level.from_ascii(FREEZE, energy=30)
+    dead = crush_cells(level)
+    assert not any_frozen_off_goal(level.walls, level.boxes, level.goal_set(), dead)
+    env = SokobanEnv(level)
+    _, _r, done, info = env.step(2)                      # push (4,3) left -> completes the 2x2 block
+    assert done and info["failure"] == FAILURE_DEADLOCK
+    assert any_frozen_off_goal(env.level.walls, env.level.boxes, env.level.goal_set(), dead)
+
+
+def test_frozen_boxes_on_goals_are_not_a_deadlock():
+    from levelforge.solvability import any_frozen_off_goal, crush_cells
+
+    level = Level.from_ascii("""######
+#    #
+# NN #
+# NN #
+#@   #
+######""")
+    assert not any_frozen_off_goal(level.walls, level.boxes, level.goal_set(), crush_cells(level))
+
+
+def test_fragile_box_breaks_on_rough_tile_but_normal_box_and_agent_cross_it():
+    from levelforge.environment import FAILURE_FRAGILE
+
+    for ch, expected in (("f", FAILURE_FRAGILE), ("n", None)):
+        env = SokobanEnv(Level.from_ascii(f"#######\n#@{ch}~ .#\n#######", energy=10))
+        _, _r, done, info = env.step(3)                      # push the box onto the rough tile
+        assert info["failure"] == expected
+        assert done == (expected is not None)
+    env = SokobanEnv(Level.from_ascii("######\n#@~  #\n# n .#\n######", energy=10))
+    env.step(3)                                              # the agent walks onto rough floor
+    assert env.level.agent == (2, 1) and not env.done
+
+
+def test_fragile_box_cut_off_by_rough_floor_is_a_deadlock_at_once():
+    from levelforge.environment import FAILURE_DEADLOCK
+
+    # After one push the fragile box can only reach the goal by crossing '~': dead now, not at timeout.
+    level = Level.from_ascii("""#######
+#     #
+#@f ~.#
+#   ~ #
+#######""", energy=20)
+    env = SokobanEnv(level)
+    _, _r, done, info = env.step(3)
+    assert done and info["failure"] == FAILURE_DEADLOCK
+    normal = SokobanEnv(Level.from_ascii(level.to_ascii().replace("f", "n"), energy=20))
+    assert not normal.step(3)[2]                              # a normal box there is fine

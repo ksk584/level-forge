@@ -157,7 +157,7 @@ def collect_200_instances_and_train(
         ]
         rng.shuffle(free)
         for alt_agent in free[:2]:
-            alt_lvl = Level(lvl.walls, lvl.goals, lvl.boxes, alt_agent, lvl.energy)
+            alt_lvl = Level(lvl.walls, lvl.goals, lvl.boxes, alt_agent, lvl.energy, lvl.rough)
             alt_m, _, _ = solve(alt_lvl, max_nodes=20000, time_limit_s=0.5)
             if alt_m:
                 st2, lb2, sol2 = collect_solver_samples(alt_lvl, alt_m)

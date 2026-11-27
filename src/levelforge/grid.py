@@ -6,6 +6,7 @@ A Level is a self-contained description of one puzzle instance:
   * boxes   -- list of (x, y, kind); kind: 0 normal, 1 heavy, 2 fragile
   * agent   -- (x, y) start cell
   * energy  -- push-energy budget (heavy pushes cost 3, others cost 1)
+  * rough   -- list of (x, y) rough floor tiles: a fragile box pushed onto one breaks
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ class Level:
     boxes: List[Tuple[int, int, int]]     # (x, y, kind)
     agent: Tuple[int, int]
     energy: int
+    rough: List[Tuple[int, int]] = field(default_factory=list)
     height: int = field(init=False)
     width: int = field(init=False)
 
@@ -50,10 +52,12 @@ class Level:
         self.boxes = _freeze_boxes(self.boxes)
         self.agent = (int(self.agent[0]), int(self.agent[1]))
         self.energy = int(self.energy)
+        self.rough = sorted({(int(x), int(y)) for x, y in self.rough})
 
     # ------------------------------------------------------------------ #
     def copy(self) -> "Level":
-        return Level(self.walls.copy(), list(self.goals), list(self.boxes), tuple(self.agent), self.energy)
+        return Level(self.walls.copy(), list(self.goals), list(self.boxes), tuple(self.agent), self.energy,
+                     list(self.rough))
 
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
@@ -102,6 +106,11 @@ class Level:
             problems.append("two boxes occupy the same cell")
         if len(positions) != len(self.goals):
             problems.append(f"boxes ({len(positions)}) != goals ({len(self.goals)})")
+        for x, y in self.rough:
+            if self.is_wall(x, y):
+                problems.append(f"rough tile at ({x},{y}) sits on a wall")
+            if (x, y) in self.goals:
+                problems.append(f"rough tile at ({x},{y}) sits on a goal")
         if self.is_wall(*self.agent):
             problems.append("agent sits on a wall")
         if self.agent in positions:
@@ -124,10 +133,15 @@ class Level:
         "h": (BOX_HEAVY, False),  "H": (BOX_HEAVY, True),
         "f": (BOX_FRAGILE, False), "F": (BOX_FRAGILE, True),
     }
+    # Rough floor: '~' empty, '&' agent on it, 'm'/'k'/'z' normal/heavy/fragile box on it.
+    # (Rough tiles are never goals, so no on-goal variants are needed.)
+    _ROUGH_BOX = {BOX_NORMAL: "m", BOX_HEAVY: "k", BOX_FRAGILE: "z"}
+    _FROM_ROUGH_BOX = {v: k for k, v in _ROUGH_BOX.items()}
 
     def to_ascii(self) -> str:
         goals = self.goal_set()
         box_map = {(x, y): kind for x, y, kind in self.boxes}
+        rough = set(self.rough)
         rows = []
         for y in range(self.height):
             row = []
@@ -136,12 +150,13 @@ class Level:
                     row.append("#")
                     continue
                 if (x, y) == self.agent:
-                    row.append("+" if (x, y) in goals else "@")
+                    row.append("+" if (x, y) in goals else "&" if (x, y) in rough else "@")
                     continue
                 if (x, y) in box_map:
-                    row.append(self._CHAR[(box_map[(x, y)], (x, y) in goals)])
+                    kind = box_map[(x, y)]
+                    row.append(self._ROUGH_BOX[kind] if (x, y) in rough else self._CHAR[(kind, (x, y) in goals)])
                     continue
-                row.append("." if (x, y) in goals else " ")
+                row.append("." if (x, y) in goals else "~" if (x, y) in rough else " ")
             rows.append("".join(row).rstrip() or " ")
         return "\n".join(rows)
 
@@ -151,7 +166,7 @@ class Level:
         h = len(lines)
         w = max(len(l) for l in lines)
         walls = np.zeros((h, w), dtype=bool)
-        goals, boxes = [], []
+        goals, boxes, rough = [], [], []
         agent = None
         for y, raw in enumerate(lines):
             for x, ch in enumerate(raw):
@@ -159,6 +174,14 @@ class Level:
                     walls[y, x] = True
                 elif ch == ".":
                     goals.append((x, y))
+                elif ch == "~":
+                    rough.append((x, y))
+                elif ch == "&":
+                    agent = (x, y)
+                    rough.append((x, y))
+                elif ch in cls._FROM_ROUGH_BOX:
+                    boxes.append((x, y, cls._FROM_ROUGH_BOX[ch]))
+                    rough.append((x, y))
                 elif ch in ("@", "+"):
                     agent = (x, y)
                     if ch == "+":
@@ -170,7 +193,7 @@ class Level:
                         goals.append((x, y))
         if agent is None:
             raise ValueError("ASCII level has no agent ('@')")
-        return cls(walls, goals, boxes, agent, energy)
+        return cls(walls, goals, boxes, agent, energy, rough)
 
     # ------------------------------------------------------------------ #
     # JSON serialisation
@@ -184,6 +207,7 @@ class Level:
             "boxes": [list(b) for b in self.boxes],
             "agent": list(self.agent),
             "energy": self.energy,
+            "rough": [list(r) for r in self.rough],
         }
 
     @classmethod
@@ -196,6 +220,7 @@ class Level:
             [tuple(b) for b in data["boxes"]],
             tuple(data["agent"]),
             data["energy"],
+            [tuple(r) for r in data.get("rough", [])],   # files written before rough tiles have none
         )
 
     def save_json(self, path):
@@ -214,6 +239,8 @@ class Level:
         """Return (N_CHANNELS, H, W) float32 one-hot observation."""
         obs = np.zeros((N_CHANNELS, self.height, self.width), dtype=np.float32)
         obs[0] = self.walls.astype(np.float32)
+        for (x, y) in self.rough:
+            obs[0, y, x] = 0.5   # rough floor shares the wall channel so trained models keep their input shape
         for (x, y) in self.goals:
             obs[1, y, x] = 1.0
         for x, y, kind in self.boxes:

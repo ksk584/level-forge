@@ -78,7 +78,7 @@ baseline. With 3 seeds the minimum attainable p is 0.10 — use 5 seeds for a si
 ```powershell
 pip install -e .            # numpy, torch, matplotlib, gymnasium, stable-baselines3
 pip install pytest
-python -m pytest -q          # 39 tests
+python -m pytest -q          # 49 tests (~20 s, includes a tiny end-to-end UED run)
 
 # 3-minute end-to-end smoke run of the whole pipeline (numbers are meaningless)
 python -m levelforge ued-run --exp runs/smoke --config configs/ued_smoke.json --seeds 0
@@ -96,9 +96,15 @@ python -m levelforge ued-attack   --exp $EXP --config $CFG --seeds 0 1 2 --budge
 python -m levelforge ued-analyze  --exp $EXP                                        # tables + figures
 ```
 
-Every command is **resumable**: finished runs are skipped. Budget: ~4–5 h for 4 conditions × 3
-seeds on an 8-core CPU; faster on a Colab T4 (`notebooks/LevelForge_UED_Colab.ipynb`, which writes
-results to Google Drive so a disconnect only loses the run in progress).
+Every command is **resumable**: finished runs are skipped, and an interrupted `ued-run` restarts
+after its last completed cycle (`resume.json` + `resume_model.zip` in the run directory; deleted
+when the run finishes). A resumed run is statistically equivalent, not bit-identical, because
+SB3's internal RNG restarts. Budget: ~4–5 h for 4 conditions × 3 seeds on an 8-core CPU; faster
+on a Colab T4 (`notebooks/LevelForge_UED_Colab.ipynb`, which writes results to Google Drive).
+
+`configs/ued_7x7_payload.json` turns on heavy and fragile boxes, with rough floor (energy budget
+and fragile-break rules). Run it with `bash scripts/run_payload.sh` (3 seeds in parallel, then the
+attack and analysis; results in `runs/ued_7x7_payload/analysis/`).
 
 Outputs in `runs/ued_7x7/`:
 
@@ -115,8 +121,33 @@ greedy), the regret and pre/post-training success of the new curriculum levels, 
 best/mean fitness, diversity, solvability yield and the fraction of candidates that break the agent.
 
 Play a fresh, random solvable puzzle with `python -m levelforge play`. Use the arrow keys or
-WASD to move; select **Switch to agent** to let the A* solver finish the current position, or
-**New random puzzle** to generate another level. Press R to restart and Esc to quit. Set difficulty
+WASD to move. Three buttons choose who plays from the current position: **Player** (you),
+**RL agent** (the PPO policy) and **A\* solver**; **New random puzzle** generates another level.
+
+**Learning from players.** Every puzzle you solve without agent help is saved to
+`runs/player_learning/games.jsonl`. Straight after each solve, the RL agent is fine-tuned by
+behaviour cloning on all saved games and written to `runs/player_learning/model.zip`, which the
+next `play` session loads. The agent's skill comes from reinforcement learning (`ued-*`); this
+adds imitation of players on top. It copies your moves, including roundabout ones, and only
+learns from boards of its own training size (7×7 for the default model). Choose the starting
+model with `--ppo <model.zip>` and the folder with `--learn-dir`.
+
+**Heavy and fragile boxes in play.** `--heavy` puts one heavy box (**H**, a push costs 3 energy) in
+every random puzzle. `--fragile` puts in one fragile box (**F**) plus rough floor tiles (sandy,
+dotted). The player and other boxes cross rough tiles freely, but a fragile box pushed onto one
+breaks and the puzzle is lost. A fragile box pushed where it could only reach a goal across rough
+floor ends the puzzle at once as `deadlock`. ASCII levels: `~` rough floor, `&` player on rough,
+`m`/`k`/`z` normal/heavy/fragile box on rough (rough tiles are never goals). Fragile puzzles are redrawn until the rough
+tiles block the shortest route, so you must find a safe one; A* verifies that one exists. Both
+flags together need `--boxes 2` (set automatically). The RL agent was never trained with these
+boxes or tiles; once `scripts/run_payload.sh` has trained one, `play` uses
+`runs/ued_7x7_payload/ga_seed0/model.zip` by default (one-box puzzles; it was not trained on two).
+With `--level`, the flags apply only to puzzles from **New random puzzle**.
+
+**Mixed boxes.** `--mix` gives every new puzzle a random combination of plain, heavy and fragile
+boxes: 2 or 3 boxes (or `--boxes N`), at least two different types, and possibly two heavy or two
+fragile boxes. Fragile boxes bring rough floor with them. `--mix` replaces `--heavy`/`--fragile`.
+The RL agent was trained on one-box puzzles, so expect it to struggle with these. Press R to restart and Esc to quit. Set difficulty
 with `--size` and `--boxes`, or start from an existing JSON level with `--level <file.json>`.
 
 Inspect any level: `python -m levelforge render --level <file.json> --out x.png`,
@@ -198,8 +229,18 @@ expert labels; it says nothing about the GA curriculum.
 * 7×7 boards with one box are small; the "+1 box" test set probes harder generalisation, and the
   config can be scaled (`n_boxes: 2`, longer pretraining) on a GPU.
 * With 3 seeds, permutation tests cannot reach p < 0.1; report effect sizes and CIs, or run 5 seeds.
-* The single-box dead-square analysis does not detect multi-box (freeze) deadlocks; episodes in
-  such states end by timeout instead of an explicit deadlock label.
+* Deadlock detection covers dead squares and freeze deadlocks (boxes jamming each other against
+  walls), not every multi-box deadlock (e.g. corral deadlocks); those episodes still end by timeout.
+  The freeze check was added after the experiments in `docs/results/` were run: in those runs a
+  frozen two-box state ended by timeout, not by an explicit deadlock.
+* Heavy/fragile boxes and rough floor are exercised by one experiment only
+  (`docs/results/ued_7x7_payload/`: 7×7, one box, learnability fitness, 3 seeds). Rough tiles are
+  drawn only when a level has a fragile box, so plain-box experiment levels are unchanged. Its
+  hand-designed test set has plain boxes only, and its adversarial set comes from learnability
+  GAs like the one the GA agent trained against.
+* The frozen-agent attack counts breaking levels as distinct by layout (ignoring energy). The
+  attack numbers in `docs/results/` predate this and counted energy-only variants separately,
+  which inflated the GA's count by about 5 % (7×7, one box).
 
 ## Legacy DQN pipeline
 

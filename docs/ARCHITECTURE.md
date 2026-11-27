@@ -11,6 +11,9 @@ Design decisions, rule definitions and pointers for the final report.
 * `boxes` — `(x, y, kind)`; `kind`: 0 normal, 1 heavy, 2 fragile.
 * `agent` — `(x, y)`.
 * `energy` — push budget. Push costs: normal/fragile 1, heavy 3.
+* `rough` — list of `(x, y)` rough floor tiles (`~`). A fragile box pushed onto one breaks;
+  the agent and normal/heavy boxes cross them. Encoded as 0.5 in the wall channel, so the
+  observation shape (and every trained model) is unchanged.
 
 ASCII round-trip (`n/N/h/H/f/F` = box kind, upper-case = on goal) and JSON serialisation
 get levels on/off disk and into tests. Observation = 6 one-hot channels (wall, goal,
@@ -24,10 +27,10 @@ Actions: 0 up, 1 down, 2 left, 3 right.
 | Event | Energy | Reward | Terminal |
 |---|---|---|---|
 | Move into wall / blocked | 0 | −0.1 (or −5.1 for invalid push) | no |
-| Push normal / fragile | 1 | −0.1 (+10 if it newly completes a goal) | fragile → crush ⇒ **fail** (`fragile_break`) |
+| Push normal / fragile | 1 | −0.1 (+10 if it newly completes a goal) | fragile onto rough tile or crush cell ⇒ **fail** (`fragile_break`) |
 | Push heavy | 3 | −0.1 (+10 likewise) | insufficient energy ⇒ push refused |
 | Puzzle solved | — | +100 | **done** (success) |
-| Box in non-goal crush cell (corner / wall-line) | — | −10 | **fail** (`deadlock`) |
+| Box off goal on a dead square, or frozen by other boxes | — | −10 | **fail** (`deadlock`) |
 | Energy hits 0 before completion | — | −10 | **fail** (`energy_exhaustion`) |
 | 300 steps elapsed | — | — | **fail** (`timeout`) |
 
@@ -45,9 +48,11 @@ type (`invalid_heavy_push`) although no episode could ever end with it.
 
 ## 3. Deadlocks & solvability (`solvability.py`)
 
-* `crush_cells`: a cell is a crush cell if boxed in by two perpendicular blocked sides
-  (corner), or by walls/out-of-play along an unbroken horizontal/vertical run that contains
-  no goal (wall-line). Boxes there can never be freed.
+* `crush_cells`: dead squares, computed by reverse-pull reachability from the goals (see §10).
+  A lone box on a dead square can never reach a goal.
+* `is_frozen` / `any_frozen_off_goal`: freeze deadlocks. A box is frozen if it is blocked on
+  both axes by walls, dead squares or other frozen boxes. A frozen box off a goal ends the
+  episode as `deadlock`, and A* never enters such a state.
 * `is_solvable`: node-capped reverse BFS from the solved state. Boxes move via pulls; a box
   moving from `X` to `X + d` additionally requires `X + d` and `X + 2d` free (the latter is
   where the agent stood during the forward push). States containing a non-goal box in a crush
@@ -67,13 +72,13 @@ Naive random placement is essentially never solvable with ≥2 boxes. Instead:
    **solvable by construction**, regardless of wall topology.
 
 At least 4 pulls are required (else the puzzle is re-drawn). Payload kinds: at most one
-heavy and one fragile for balance; energy = 12 + 5·n_boxes + 2×(#heavy) — deliberately tight
-so that the energy budget is a meaningful constraint for both the agent and the GA.
+heavy and one fragile for balance. `random_solvable_level` then A*-verifies the level and sets
+energy = optimal plan's push cost + 6.
 
-GA children from crossover/mutation are filtered by `is_solvable` before acceptance and may
-also be repaired (`repair_level`): borders enforced, boxes/goals deduplicated and relocated,
-agent re-sited, box/goal counts re-matched. Children failing repair or the solvability
-filter are discarded; the discard rate is logged as Solvability Yield (SY).
+GA children from crossover/mutation are repaired (`repair_level`: borders enforced,
+boxes/goals deduplicated and relocated, agent re-sited, box/goal counts re-matched) and must
+then pass the A* gate (`solver.verify_level`). Children failing repair or A* are discarded;
+the discard rate is logged as Solvability Yield (SY).
 
 ## 5. DQN (`dqn.py`)
 
@@ -125,9 +130,11 @@ vs generation; Welch's t-test / Mann–Whitney U on final SR and FDE.
   player's moves, the step cap and the energy budget; children that fail are discarded and
   counted in the solvability yield. `tests/test_fixes.py` includes a level that passes the
   reverse-BFS check but is unsolvable because the player is walled off; A* rejects it.
-* Heavy/fragile payload mechanics do not change structural solvability; they shape rewards
-  and failure categories (used by the GA fitness and evaluation).
-* 10×10 is the default board as per the synopsis's 10–15×15 plan; `--size` is exposed.
+* Heavy boxes change energy feasibility: if the move-optimal plan costs more energy than the
+  level grants, `verify_level(fix_energy=False)` re-plans with the budget in the A* state and
+  accepts a longer, cheaper plan if one exists.
+* The legacy pipeline defaults to 10×10 boards (synopsis plan); the UED experiments use 7×7
+  and 9×9. `--size` is exposed.
 * One CPU process trains everything (no distributed sampling) — adequate for 8–10×10; use
   Colab T4 for the full protocol.
 

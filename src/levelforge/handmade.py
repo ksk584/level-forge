@@ -19,7 +19,7 @@ def pad_level(level: Level, size: int) -> Level:
         raise ValueError(f"level {h}x{w} does not fit a {size}x{size} board")
     walls = np.ones((size, size), dtype=bool)
     walls[:h, :w] = level.walls
-    return Level(walls, level.goals, level.boxes, level.agent, level.energy)
+    return Level(walls, level.goals, level.boxes, level.agent, level.energy, level.rough)
 
 
 def load_handmade(path=DEFAULT_FILE, size: int | None = None) -> List[Tuple[str, Level]]:

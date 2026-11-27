@@ -3,7 +3,8 @@
 Sokoban feasibility is PSPACE-complete in general, so this module uses a
 cheap but effective combination:
 
-  1. Local crush rules (corner / wall-line deadlock) to reject hopeless boxes.
+  1. Dead squares (``crush_cells``) and freeze deadlocks (``is_frozen``) to reject
+     hopeless boxes.
   2. A node-capped reverse BFS from the solved configuration (boxes on goals)
      towards the initial configuration.  In reverse we *pull* boxes.  Node
      states that contain a box stuck in a non-goal crush cell are pruned.
@@ -20,7 +21,7 @@ from typing import Iterable, List, Set, Tuple
 from .grid import Level
 
 
-def crush_cells(level: Level) -> Set[Tuple[int, int]]:
+def crush_cells(level: Level, fragile: bool = False) -> Set[Tuple[int, int]]:
     """Dead squares: free cells from which a lone box can never reach any goal.
 
     Standard "simple deadlock" detection.  Starting with a box on every goal we
@@ -32,14 +33,19 @@ def crush_cells(level: Level) -> Set[Tuple[int, int]]:
     local "two walls opposite each other" rule -- never flags 1-wide corridors
     that a box can legitimately travel along.  Depends only on walls + goals,
     so callers should compute it once per level and reuse it.
+
+    ``fragile=True`` gives the dead squares of a fragile box, which may never be pushed onto
+    rough floor: a rough cell is live (the box can be pushed off it) but nothing is reached
+    through it.  The agent may still stand on rough floor.
     """
     h, w = level.height, level.width
     walls = level.walls
+    rough = set(level.rough) if fragile else set()
 
     def free(x, y):
         return 0 <= x < w and 0 <= y < h and not walls[y, x]
 
-    live: Set[Tuple[int, int]] = set(g for g in level.goals if free(*g))
+    live: Set[Tuple[int, int]] = set(g for g in level.goals if free(*g) and g not in rough)
     stack = list(live)
     while stack:
         cx, cy = stack.pop()
@@ -48,8 +54,39 @@ def crush_cells(level: Level) -> Set[Tuple[int, int]]:
             ax, ay = px - dx, py - dy          # where the agent stood to push
             if (px, py) not in live and free(px, py) and free(ax, ay):
                 live.add((px, py))
-                stack.append((px, py))
+                if (px, py) not in rough:      # a box can only be pushed *from* a rough cell
+                    stack.append((px, py))
     return {(x, y) for y in range(h) for x in range(w) if not walls[y, x] and (x, y) not in live}
+
+
+def is_frozen(walls, pos: Tuple[int, int], box_set: Set[Tuple[int, int]], dead: Set[Tuple[int, int]],
+              _assumed: frozenset = frozenset()) -> bool:
+    """Freeze deadlock: the box at ``pos`` can never move again.
+
+    A box is stuck along an axis if a wall (or a box already assumed stuck) is on
+    either side, if both sides are dead squares, or if a neighbouring box on that
+    axis is itself frozen.  Frozen = stuck on both axes.  Boxes under examination
+    are treated as walls to break cycles (standard Sokoban freeze test).
+    """
+    h, w = walls.shape
+    assumed = _assumed | {pos}
+    x, y = pos
+
+    def wall(c):
+        return not (0 <= c[0] < w and 0 <= c[1] < h) or walls[c[1], c[0]] or c in assumed
+
+    def stuck(a, b):
+        if wall(a) or wall(b) or (a in dead and b in dead):
+            return True
+        return any(c in box_set and is_frozen(walls, c, box_set, dead, assumed) for c in (a, b))
+
+    return stuck((x - 1, y), (x + 1, y)) and stuck((x, y - 1), (x, y + 1))
+
+
+def any_frozen_off_goal(walls, boxes, goal_set, dead) -> bool:
+    """True if some box off a goal is frozen -- the level can no longer be solved."""
+    box_set = {(b[0], b[1]) for b in boxes}
+    return any(p not in goal_set and is_frozen(walls, p, box_set, dead) for p in box_set)
 
 
 def box_is_deadlocked(level: Level, pos: Tuple[int, int], crush: Set[Tuple[int, int]] | None = None) -> bool:

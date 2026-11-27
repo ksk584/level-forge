@@ -1,8 +1,10 @@
-numpy>=1.24
-torch>=2.1
-matplotlib>=3.7
-gymnasium>=0.29
-stable-baselines3>=2.3
-pytest>=8
+# Exact versions the test suite last passed with (Python 3.14, Windows).
+# pyproject.toml holds the minimum ranges; use this file to reproduce an environment.
+numpy==2.4.1
+torch==2.12.0
+matplotlib==3.11.2
+gymnasium==1.4.0
+stable-baselines3==2.9.2
+pytest==9.2.0
 # Optional interactive viewer:
 # PyQt5>=5.15

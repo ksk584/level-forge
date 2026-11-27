@@ -220,17 +220,32 @@ def cmd_play(args):
         level = Level.load_json(args.level)
         size = args.size if args.size is not None else level.width
         boxes = args.boxes if args.boxes is not None else len(level.boxes)
+        if args.heavy or args.fragile or args.mix:
+            print("[levelforge] --heavy/--fragile/--mix apply to 'New random puzzle', not to the loaded level")
     else:
         size = args.size if args.size is not None else 7
-        boxes = args.boxes if args.boxes is not None else 1
+        boxes = args.boxes if args.boxes is not None else (0 if args.mix else 1)   # 0: mix picks 2 or 3
         level = None
+    if args.mix and (args.heavy or args.fragile):
+        raise SystemExit("[levelforge] use --mix on its own: it already picks heavy/fragile/plain boxes")
+    if args.heavy and args.fragile and boxes < 2:
+        boxes = 2
+        print("[levelforge] --heavy with --fragile needs 2 boxes; using 2")
 
     def generate_next():
-        return generate_play_level(rng, size=size, n_boxes=boxes)
+        return generate_play_level(rng, size=size, n_boxes=boxes, heavy=args.heavy, fragile=args.fragile,
+                                   mix=args.mix)
 
     if level is None:
         level = generate_next()
-    run_game(level, generate_next, delay_ms=args.delay)
+    # RL agent: the model learned from players if there is one, else the payload experiment's GA agent
+    # (trained with heavy/fragile boxes and rough tiles), else the main experiment's GA agent.
+    ppo = args.ppo or next((p for p in (Path(args.learn_dir) / "model.zip",
+                                        Path("runs/ued_7x7_payload/ga_seed0/model.zip"),
+                                        Path("runs/ued_7x7/ga_seed0/model.zip")) if p.exists()), None)
+    print(f"[levelforge] RL agent: {ppo or 'none found (pass --ppo <model.zip>)'}")
+    run_game(level, generate_next, delay_ms=args.delay, ppo_model=str(ppo) if ppo else None,
+             learn_dir=args.learn_dir)
 
 
 def cmd_solve(args):
@@ -415,6 +430,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=None, help="optional RNG seed; by default each launch is random")
     p.add_argument("--delay", type=int, default=250, help="milliseconds between agent moves (30-5000)")
     p.add_argument("--tk", action="store_true", help="accepted for compatibility; play uses the Tkinter game window")
+    p.add_argument("--heavy", action="store_true", help="every random puzzle has one heavy box (a push costs 3 energy)")
+    p.add_argument("--fragile", action="store_true",
+                   help="every random puzzle has one fragile box and rough floor tiles that break it")
+    p.add_argument("--mix", action="store_true",
+                   help="every random puzzle has a random combination of plain, heavy and fragile boxes "
+                        "(2-3 boxes, or --boxes N)")
+    p.add_argument("--ppo", default=None,
+                   help="PPO model.zip for the RL agent button (default: <learn-dir>/model.zip, else "
+                        "runs/ued_7x7_payload/ga_seed0/model.zip, else runs/ued_7x7/ga_seed0/model.zip)")
+    p.add_argument("--learn-dir", default="runs/player_learning",
+                   help="where your solved games (games.jsonl) and the player-tuned model (model.zip) are saved")
     p.set_defaults(func=cmd_play)
 
     w = sub.add_parser("watch", help="Watch an agent (PPO --ppo, DQN --checkpoint) or the A* solver play a level")

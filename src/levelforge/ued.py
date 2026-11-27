@@ -223,30 +223,48 @@ def run_condition(cfg: Dict, condition: str, seed: int, exp_dir: Path) -> Path:
         print(f"[ued] {out.name} already complete, skipping")
         return out
     out.mkdir(parents=True, exist_ok=True)
-    (out / "metrics.jsonl").unlink(missing_ok=True)
+    resume_path, resume_model = out / "resume.json", out / "resume_model.zip"
+    resume = json.loads(resume_path.read_text(encoding="utf-8")) if resume_path.exists() else None
+    if resume is None:
+        (out / "metrics.jsonl").unlink(missing_ok=True)
     with open(out / "config.json", "w", encoding="utf-8") as f:
         json.dump({**cfg, "condition": condition, "seed": seed}, f, indent=2)
     set_torch_threads(cfg.get("threads"))
 
     ckpt = pretrain(cfg, seed, exp_dir)
     base = sample_levels(np.random.default_rng(seed), cfg["base_pool"], cfg)   # same pool as pretraining
-    agent = PPOAgent.load(ckpt, base, seed=seed, device=cfg["device"], max_steps=cfg["max_steps"], **cfg["ppo"])
+    agent = PPOAgent.load(resume_model if resume else ckpt, base, seed=seed, device=cfg["device"],
+                          max_steps=cfg["max_steps"], **cfg["ppo"])
     sets = test_sets(cfg)
     solver = SolverCache(cfg["max_steps"])
     rng = np.random.default_rng(seed * 7919 + CONDITIONS.index(condition) + 1)
     k = cfg["levels_per_cycle"]
-
-    population = sample_levels(rng, cfg["population"], cfg) if condition == "ga" else []
-    fixed_set = sample_levels(rng, k, cfg) if condition == "fixed" else []
-    archive: List[Level] = []
-    archive_keys: set = set()
     allow_kinds = cfg["heavy_prob"] > 0 or cfg["fragile_prob"] > 0
 
-    row0 = {"cycle": -1, "condition": condition, "seed": seed, "timesteps": agent.timesteps,
-            **evaluate_sets(agent, sets, cfg)}
-    _log(out, row0)
-    t0 = time.time()
-    for cycle in range(cfg["cycles"]):
+    if resume:
+        # shortcut: SB3's internal RNG and the level-sampling RNG restart on resume, so a resumed
+        # run is statistically equivalent but not bit-identical to an uninterrupted one.
+        population = [Level.from_dict(d) for d in resume["population"]]
+        fixed_set = [Level.from_dict(d) for d in resume["fixed_set"]]
+        archive = [Level.from_dict(d) for d in resume["archive"]]
+        rng.bit_generator.state = resume["rng"]
+        start = resume["cycle"] + 1
+        # Drop any row logged after the saved state (crash between logging and saving).
+        rows = [l for l in (out / "metrics.jsonl").read_text(encoding="utf-8").splitlines()
+                if l.strip() and json.loads(l)["cycle"] <= resume["cycle"]]
+        (out / "metrics.jsonl").write_text("".join(r + "\n" for r in rows), encoding="utf-8")
+        print(f"[ued] {out.name}: resuming after cycle {resume['cycle']}", flush=True)
+    else:
+        population = sample_levels(rng, cfg["population"], cfg) if condition == "ga" else []
+        fixed_set = sample_levels(rng, k, cfg) if condition == "fixed" else []
+        archive: List[Level] = []
+        start = 0
+        row0 = {"cycle": -1, "condition": condition, "seed": seed, "timesteps": agent.timesteps,
+                **evaluate_sets(agent, sets, cfg)}
+        _log(out, row0)
+    archive_keys = {level_key(l) for l in archive}
+    t0 = time.time() - (resume["elapsed_s"] if resume else 0.0)
+    for cycle in range(start, cfg["cycles"]):
         row: Dict = {"cycle": cycle, "condition": condition, "seed": seed}
         # ---------------- choose this cycle's new levels ----------------
         if condition == "ga":
@@ -302,6 +320,14 @@ def run_condition(cfg: Dict, condition: str, seed: int, exp_dir: Path) -> Path:
         row["timesteps"] = agent.timesteps
         row["elapsed_s"] = round(time.time() - t0, 1)
         _log(out, row)
+        # Checkpoint: model first, then the state file (written atomically) that points at it.
+        agent.save(resume_model)
+        tmp = resume_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({
+            "cycle": cycle, "elapsed_s": row["elapsed_s"], "rng": rng.bit_generator.state,
+            "population": [l.to_dict() for l in population], "fixed_set": [l.to_dict() for l in fixed_set],
+            "archive": [l.to_dict() for l in archive]}), encoding="utf-8")
+        tmp.replace(resume_path)
         print(f"[ued] {condition} s{seed} cycle {cycle:02d} | new pre/post SR "
               f"{row['new_levels_pre_sr']:.2f}->{row['new_levels_post_sr']:.2f} | heldout "
               f"{row['heldout_sr']:.2f} hard {row['heldout_hard_sr']:.2f} hand {row['handmade_sr']:.2f} "
@@ -313,6 +339,8 @@ def run_condition(cfg: Dict, condition: str, seed: int, exp_dir: Path) -> Path:
     with open(out / "summary.json", "w", encoding="utf-8") as f:
         json.dump({"condition": condition, "seed": seed, "final": final, "timesteps": agent.timesteps,
                    "wall_clock_s": round(time.time() - t0, 1)}, f, indent=2)
+    resume_path.unlink(missing_ok=True)
+    resume_model.unlink(missing_ok=True)
     return out
 
 

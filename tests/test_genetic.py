@@ -69,3 +69,19 @@ def test_next_generation_returns_n_children():
     children, attempts, solvable = next_generation(pop, fit, rng, elite_k=1, max_nodes=3000, max_attempts=30)
     assert len(children) == len(pop)
     assert attempts >= 0
+
+
+def test_ga_children_keep_rough_tiles_on_free_non_goal_cells():
+    from levelforge.genetic import crossover, mutate
+    from levelforge.population import generate_play_level
+
+    rng = np.random.default_rng(0)
+    a, b = (generate_play_level(rng, fragile=True) for _ in range(2))
+    for _ in range(20):
+        child = crossover(a, b, rng)
+        child = mutate(child, rng) if child is not None else None
+        if child is None:
+            continue
+        assert child.validate() == []
+        assert all(not child.walls[y, x] and (x, y) not in child.goals for x, y in child.rough)
+        assert set(child.rough) <= set(a.rough) | set(b.rough)

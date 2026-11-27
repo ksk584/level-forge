@@ -131,3 +131,45 @@ def test_handmade_file_config_loads_9x9_two_box_set():
     assert len(sets["handmade"]) == 12                      # every puzzle A*-verified
     assert all(l.walls.shape == (9, 9) and len(l.boxes) == 2 for l in sets["handmade"])
     assert all(len(l.boxes) == 3 for l in sets["heldout_hard"])
+
+
+TINY_UED = {"size": 7, "n_boxes": 1, "heavy_prob": 0.3, "fragile_prob": 0.3, "base_pool": 8,
+            "pretrain_steps": 64, "cycles": 2, "steps_per_cycle": 64, "levels_per_cycle": 2,
+            "population": 4, "ga_generations": 1, "eval_trials": 1, "elite": 1, "heldout_size": 4,
+            "test_trials": 1, "threads": 1, "device": "cpu",
+            "ppo": {"n_envs": 2, "n_steps": 32, "batch_size": 32}}
+
+
+def test_ued_pipeline_end_to_end_with_crash_resume(tmp_path, monkeypatch):
+    """ued-run (crash after cycle 1, then resume), ued-attack and ued-analyze on a tiny config."""
+    import json
+
+    from levelforge import ued
+    from levelforge.analysis import analyze
+    from levelforge.attack import run_attack
+
+    real_log = ued._log
+
+    def crashing_log(out, row):
+        real_log(out, row)
+        if row["cycle"] == 1:
+            raise KeyboardInterrupt("simulated crash")
+
+    monkeypatch.setattr(ued, "_log", crashing_log)
+    with pytest.raises(KeyboardInterrupt):
+        ued.run_condition(TINY_UED, "ga", 0, tmp_path)
+    run = tmp_path / "ga_seed0"
+    assert (run / "resume.json").exists() and not (run / "summary.json").exists()
+
+    monkeypatch.setattr(ued, "_log", real_log)
+    ued.run_condition(TINY_UED, "ga", 0, tmp_path)       # resumes at cycle 1 (row was not checkpointed)
+    rows = [json.loads(l) for l in (run / "metrics.jsonl").read_text().splitlines()]
+    assert [r["cycle"] for r in rows] == [-1, 0, 1]
+    assert (run / "summary.json").exists() and not (run / "resume.json").exists()
+    assert len(ued.load_levels(run / "archive.json")) >= 2
+
+    ued.run_condition(TINY_UED, "random", 0, tmp_path)
+    run_attack(tmp_path / "pretrain_seed0" / "model.zip", TINY_UED, tmp_path / "attack", budget=8, seeds=(0,))
+    out = analyze(tmp_path)
+    text = (out / "results.md").read_text(encoding="utf-8")
+    assert "Held-out random levels" in text and "Failure-discovery efficiency" in text
